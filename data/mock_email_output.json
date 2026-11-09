@@ -1,0 +1,26 @@
+{
+  "case_id": "CASE-0001",
+  "consultation_reference": "NE-2026-10001",
+  "planning_application_reference": "24/01728/FUL",
+  "planning_authority": "East Riding of Yorkshire Council",
+  "consultation_received_date": "2026-10-18",
+  "email_sender": "planning.consultations@eastriding.gov.uk",
+  "email_subject": "Natural England Consultation - 24/01728/FUL",
+
+  "email_summary": {
+    "proposal": "Development of an onshore wind energy generation site.",
+    "location": "Land south-east of Bridlington, East Riding of Yorkshire.",
+    "key_points": [
+      "Application relates to a proposed wind energy development.",
+      "The development includes six wind turbines.",
+      "Associated site access tracks are proposed.",
+      "The proposal includes a surface water drainage system.",
+      "Natural England consultation requested by the local planning authority."
+    ]
+  },
+
+  "attachments": [
+    "Consultation Letter.pdf",
+    "Application Form.pdf"
+  ]
+}

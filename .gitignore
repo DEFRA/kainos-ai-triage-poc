@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.DS_Store
+
+# Virtual environments
+.venv
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+data/temp/
+data/OS_Open_Built_Up_Areas_GeoPackage/
+.github/
+notebooks/
+
+environment/model_configs/*
+!environment/model_configs/bedrock-placeholder.yaml
+!environment/model_configs/ollama-placeholder.yaml

@@ -1,0 +1,1 @@
+"""Spatial-screening implementation variants."""

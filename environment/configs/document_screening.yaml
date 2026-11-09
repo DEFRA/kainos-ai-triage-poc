@@ -1,0 +1,13 @@
+document_screening:
+  max_concurrent_downloads: 5
+  include_maybe: false
+  ignore_after: null
+
+lpa:
+  request_interval_seconds: 0
+  retry_increment_seconds: 0
+  max_retries: 0
+  max_wait_seconds: 60
+  refresh_session_on_429: true
+  session_refresh_wait_seconds: 60
+  max_session_refreshes: 3

@@ -1,0 +1,10 @@
+provider: ollama
+api_style: openai
+model: <model-id>
+base_url: <base-url>
+max_output_tokens: 1500
+
+# Only set for a model/server supporting reasoning_effort.
+# thinking_level: low
+# Only needed if your endpoint requires authentication.
+# api_key_env: OLLAMA_API_KEY

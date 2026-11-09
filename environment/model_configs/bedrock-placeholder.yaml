@@ -1,0 +1,13 @@
+provider: bedrock
+api_style: converse
+# Replace with a model or inference profile available in your AWS account/region.
+model: <model-id>
+region: <region>
+max_output_tokens: 1500
+
+# Optional AWS profile; otherwise use the default AWS credential chain.
+# aws_profile: <aws-profile>
+# Optional bedrock-runtime endpoint override, not an OpenAI /v1 endpoint.
+# base_url: https://bedrock-runtime.eu-west-2.amazonaws.com
+# Only set for a Claude model supporting adaptive thinking and effort.
+# thinking_level: low
