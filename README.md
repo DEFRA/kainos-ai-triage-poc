@@ -2,6 +2,27 @@
 
 Experiments supporting the planning consultation caseworker journey.
 
+The project requires Python 3.12 or newer; local development is pinned to
+Python 3.12.12. Use `uv sync` to create the project environment and install
+dependencies.
+
+## Consultation API
+
+The synchronous FastAPI service runs intake, document screening, and spatial
+screening. Set `AI_TRIAGE_MODEL_CONFIG` to a model configuration path, then run
+the API from the repository root:
+
+```sh
+export AI_TRIAGE_MODEL_CONFIG=environment/model_configs/your-model-config.yaml
+uv run --python 3.12.12 uvicorn ai_triage.api:app --reload
+```
+
+Submit case JSON to `POST /consultations`. The response contains the stage
+outputs, warnings, errors, and a run ID. Retrieve a saved response with
+`GET /consultations/{run_id}`. Run records and stage files are written under
+`data/runs/`. The current result structure is provisional; consultation
+classification rules and evidence fields have not yet been defined.
+
 ## Synchronous LLM client
 
 The [shared LLM client](src/shared/llm_client.py) supports:

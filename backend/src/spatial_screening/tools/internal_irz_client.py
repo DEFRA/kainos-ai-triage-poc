@@ -6,6 +6,8 @@ from typing import Optional, Union
 import requests
 import yaml
 
+from backend.src.utilities.http import create_system_trust_session
+
 
 _DEFAULT_CONFIG_PATH = (
     Path(__file__).resolve().parents[4]
@@ -49,7 +51,7 @@ class InternalIRZClient:
         config_path = Path(config_path) if config_path is not None else _DEFAULT_CONFIG_PATH
         self.timeout_seconds = _load_request_timeout(config_path)
         self.url = "https://irz.geodata.org.uk/poly_search_internal/"
-        self.session = requests.Session()
+        self.session = create_system_trust_session()
 
     @staticmethod
     def _validate_bng_polygon(polygon):

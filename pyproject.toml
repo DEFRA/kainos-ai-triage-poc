@@ -3,13 +3,14 @@ name = "ai-triage"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.35.0",
     "bs4>=0.0.2",
     "fiona>=1.9",
+    "fastapi>=0.115,<1",
     "ipykernel>=6.31.0",
-    "openai>=1.55.0",
+    "openai>=1.55.0,<3",
     "pandas>=2.3.3",
     "pillow>=11.0.0",
     "python-dotenv>=1.0.0",
@@ -18,14 +19,28 @@ dependencies = [
     "pyyaml>=6.0.2",
     "requests>=2.32.5",
     "shapely>=2.0",
+    "truststore>=0.10.4,<1",
+    "uvicorn>=0.34,<1",
 ]
 
 [project.scripts]
 ai-triage = "ai_triage:main"
 
 [build-system]
-requires = ["uv_build>=0.12.23,<0.13.0"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
 
-[tool.uv.build-backend]
-module-name = ["ai_triage", "spatial_screening", "shared", "document_screening"]
+[tool.hatch.build.targets.wheel]
+packages = [
+    "backend/orchestrator",
+    "backend/src/ai_triage",
+    "backend/src/document_screening",
+    "backend/src/email_intake",
+    "backend/src/spatial_screening",
+    "backend/src/utilities",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+]

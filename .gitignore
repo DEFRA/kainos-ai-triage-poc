@@ -16,6 +16,7 @@ wheels/
 !.env.example
 
 data/temp/
+data/runs/
 data/OS_Open_Built_Up_Areas_GeoPackage/
 .github/
 notebooks/
