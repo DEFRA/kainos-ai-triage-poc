@@ -19,6 +19,10 @@ dependencies = [
     "pyyaml>=6.0.2",
     "requests>=2.32.5",
     "shapely>=2.0",
+    "pdfplumber>=0.11.10",
+    "extract-msg>=0.58.0",
+    "streamlit>=1.66.0",
+    "python-docx>=1.2.0",
     "truststore>=0.10.4,<1",
     "uvicorn>=0.34,<1",
 ]
