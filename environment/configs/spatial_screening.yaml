@@ -1,6 +1,6 @@
 spatial_screening:
   human_review_confidence_threshold: High
-  urban_built_up_coverage_threshold_percent: 50
+  urban_built_up_coverage_threshold_percent: 10
 
 internal_irz:
   request_timeout_seconds: 30

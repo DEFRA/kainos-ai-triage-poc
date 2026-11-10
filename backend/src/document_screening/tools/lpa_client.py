@@ -20,6 +20,8 @@ import requests
 from bs4 import BeautifulSoup
 import yaml
 
+from backend.src.utilities.http import create_system_trust_session
+
 
 _LOGGER = logging.getLogger(__name__)
 _DEFAULT_CONFIG_PATH = (
@@ -106,7 +108,7 @@ class PublicAccessClient:
 		self.session = self._new_session()
 
 	def _new_session(self):
-		session = requests.Session()
+		session = create_system_trust_session()
 		session.headers.update({
 			"User-Agent": self.user_agent,
 			"Accept": "text/html,application/xhtml+xml",

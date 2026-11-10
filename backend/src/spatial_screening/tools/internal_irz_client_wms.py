@@ -2,6 +2,9 @@ import requests
 from bs4 import BeautifulSoup
 from pyproj import Transformer
 
+from backend.src.utilities.http import create_system_trust_session
+
+
 class InternalIRZClientWMS:
     def __init__(self, feature_count=100):
         self.feature_count = feature_count
@@ -28,7 +31,7 @@ class InternalIRZClientWMS:
                 f"&FEATURE_COUNT={feature_count}"
             )
 
-        self.session = requests.Session()
+        self.session = create_system_trust_session()
 
     def _parse_url(self, response):
         soup = BeautifulSoup(response.text, "html.parser")

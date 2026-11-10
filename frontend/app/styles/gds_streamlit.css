@@ -1,0 +1,404 @@
+@import url("https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&display=swap");
+
+header[data-testid="stHeader"],
+div[data-testid="stToolbar"],
+#MainMenu,
+footer {
+display: none !important;
+}
+
+:root {
+  --gds-text: #0b0c0c;
+  --gds-background: #ffffff;
+  --gds-muted: #f3f2f1;
+  --gds-border: #505a5f;
+  --gds-link: #1d70b8;
+  --gds-link-hover: #003078;
+  --gds-focus: #ffdd00;
+  --gds-success: #00703c;
+  --gds-error: #d4351c;
+  --gds-warning: #f47738;
+  --gds-info: #1d70b8;
+}
+
+html,
+body,
+[class*="stApp"] {
+  font-family: "Public Sans", "Segoe UI", Arial, Helvetica, sans-serif;
+  color: var(--gds-text);
+  background: var(--gds-muted);
+}
+
+.stApp {
+  background: linear-gradient(180deg, #ffffff 0 6.5rem, #f3f2f1 6.5rem 100%);
+}
+
+main .block-container {
+  max-width: 60rem;
+  padding-top: 1.75rem;
+  padding-bottom: 3rem;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--gds-text);
+  font-family: "Public Sans", "Segoe UI", Arial, Helvetica, sans-serif;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 3.4vw, 3rem);
+  line-height: 1.1;
+  margin-bottom: 0.75rem;
+}
+
+h2 {
+  font-size: clamp(1.4rem, 2.5vw, 2.25rem);
+  line-height: 1.2;
+  margin-top: 1.35rem;
+  margin-bottom: 0.5rem;
+}
+
+h3 {
+  font-size: clamp(1.15rem, 2vw, 1.5rem);
+  line-height: 1.3;
+}
+
+p,
+label,
+li,
+small,
+span {
+  color: var(--gds-text);
+}
+
+a {
+  color: var(--gds-link);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--gds-link-hover);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[role="combobox"]:focus-visible,
+[role="slider"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--gds-focus) !important;
+  outline-offset: 0;
+  box-shadow: inset 0 0 0 2px var(--gds-text) !important;
+}
+
+hr,
+.stDivider {
+  border-color: #b1b4b6 !important;
+}
+
+.govuk-phase-banner {
+  border-bottom: 1px solid #b1b4b6;
+  margin: 0 0 1.25rem;
+  padding-bottom: 0.7rem;
+  font-size: 0.95rem;
+}
+
+.govuk-tag {
+  display: inline-block;
+  background: #1d70b8;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  line-height: 1;
+  font-weight: 700;
+  padding: 0.35rem 0.45rem;
+  margin-right: 0.55rem;
+}
+
+.govuk-caption-xl {
+  color: #505a5f;
+  display: block;
+  font-size: 1.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.govuk-hint {
+  color: #505a5f;
+  margin-top: 0.3rem;
+  font-size: 0.95rem;
+}
+
+.govuk-inset-text {
+  border-left: 0.65rem solid #b1b4b6;
+  padding: 0.85rem 1rem;
+  margin: 1rem 0;
+  background: #ffffff;
+}
+
+.govuk-section-break {
+  border: 0;
+  border-bottom: 1px solid #b1b4b6;
+  margin: 2rem 0;
+}
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input,
+div[data-testid="stDateInput"] input,
+div[data-testid="stTimeInput"] input,
+div[data-testid="stTextInputRootElement"] input,
+div[data-baseweb="input"] input,
+div[data-baseweb="textarea"] textarea,
+div[data-baseweb="select"] [role="combobox"] {
+  background: #ffffff !important;
+  border: 2px solid var(--gds-text) !important;
+  border-radius: 0 !important;
+  color: var(--gds-text) !important;
+  min-height: 2.65rem;
+  box-shadow: none !important;
+}
+
+div[data-testid="stTextArea"] textarea {
+  min-height: 7.5rem;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #6f777b !important;
+}
+
+.stSelectbox > div[data-baseweb="select"] > div,
+.stMultiSelect > div[data-baseweb="select"] > div {
+  border: 2px solid var(--gds-text) !important;
+  border-radius: 0 !important;
+  min-height: 2.65rem;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+ul[role="listbox"] {
+  border: 2px solid var(--gds-text) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+ul[role="listbox"] li {
+  min-height: 2.25rem;
+}
+
+.stMultiSelect span[data-baseweb="tag"] {
+  border-radius: 0 !important;
+  border: 1px solid #1d70b8 !important;
+  background: #e8f1fa !important;
+}
+
+.stSlider [role="slider"] {
+  border: 2px solid var(--gds-text) !important;
+  background: #ffffff !important;
+}
+
+.stSlider [data-baseweb="slider"] > div:nth-child(1),
+.stSlider [data-baseweb="slider"] > div:nth-child(2) {
+  background: #b1b4b6 !important;
+}
+
+.stSlider [data-baseweb="slider"] > div:nth-child(3) {
+  background: var(--gds-link) !important;
+}
+
+.stCheckbox label,
+.stRadio label,
+.stToggle label {
+  font-weight: 600;
+}
+
+div[data-baseweb="checkbox"] > div,
+div[data-baseweb="radio"] > div {
+  border: 2px solid var(--gds-text) !important;
+  box-shadow: none !important;
+}
+
+.stButton > button,
+.stDownloadButton > button,
+.stForm [data-testid="baseButton-secondary"],
+button[kind="secondary"],
+button[kind="tertiary"] {
+  border-radius: 0 !important;
+  border: 2px solid var(--gds-text) !important;
+  background: #ffffff !important;
+  color: var(--gds-text) !important;
+  font-weight: 700 !important;
+  min-height: 2.75rem;
+  padding: 0.35rem 1.1rem;
+  box-shadow: 0 2px 0 var(--gds-text) !important;
+}
+
+.stButton > button[kind="primary"],
+button[kind="primary"] {
+  border: 2px solid #005a30 !important;
+  background: var(--gds-success) !important;
+  color: #ffffff !important;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover,
+button[kind="secondary"]:hover,
+button[kind="tertiary"]:hover {
+  background: #f3f2f1 !important;
+}
+
+.stButton > button[kind="primary"]:hover,
+button[kind="primary"]:hover {
+  background: #005a30 !important;
+}
+
+.stButton > button:active,
+.stDownloadButton > button:active,
+button[kind]:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 var(--gds-text) !important;
+}
+
+section[data-testid="stFileUploaderDropzone"] {
+  background: #ffffff;
+  border: 2px dashed var(--gds-border) !important;
+  border-radius: 0 !important;
+  padding: 1rem;
+}
+
+section[data-testid="stFileUploaderDropzone"]:hover {
+  border-color: var(--gds-link) !important;
+  background: #f8fbff;
+}
+
+div[data-testid="stAlert"] {
+  border-left: 0.65rem solid var(--gds-info) !important;
+  border-radius: 0 !important;
+  border-top: 1px solid #d8d8d8;
+  border-right: 1px solid #d8d8d8;
+  border-bottom: 1px solid #d8d8d8;
+  box-shadow: none !important;
+}
+
+div[data-testid="stAlert"][kind="success"] {
+  border-left-color: var(--gds-success) !important;
+}
+
+div[data-testid="stAlert"][kind="warning"] {
+  border-left-color: var(--gds-warning) !important;
+}
+
+div[data-testid="stAlert"][kind="error"] {
+  border-left-color: var(--gds-error) !important;
+}
+
+div[data-testid="stDataFrame"] div[role="grid"],
+div[data-testid="stTable"] table {
+  border: 1px solid #b1b4b6 !important;
+  border-radius: 0 !important;
+}
+
+div[data-testid="stDataFrame"] [role="columnheader"],
+div[data-testid="stTable"] th {
+  background: #f3f2f1 !important;
+  color: var(--gds-text) !important;
+  font-weight: 700 !important;
+  border-bottom: 2px solid #505a5f !important;
+}
+
+div[data-testid="stDataFrame"] [role="gridcell"],
+div[data-testid="stTable"] td {
+  border-top: 1px solid #d8d8d8 !important;
+}
+
+div[data-testid="stMetric"] {
+  border: 1px solid #b1b4b6;
+  border-radius: 0;
+  background: #ffffff;
+  padding: 0.9rem;
+}
+
+button[data-baseweb="tab"] {
+  border-radius: 0 !important;
+  border: 0 !important;
+  border-bottom: 3px solid transparent !important;
+  color: var(--gds-text) !important;
+  font-weight: 700 !important;
+  padding-left: 0;
+  padding-right: 1.25rem;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+  border-bottom-color: var(--gds-link) !important;
+  color: var(--gds-link) !important;
+}
+
+div[data-testid="stExpander"] {
+  border: 1px solid #b1b4b6;
+  border-radius: 0 !important;
+  background: #ffffff;
+}
+
+div[data-testid="stExpander"] summary {
+  font-weight: 700;
+}
+
+pre,
+code {
+  font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace !important;
+}
+
+pre {
+  border: 1px solid #b1b4b6;
+  border-radius: 0 !important;
+}
+
+section[data-testid="stSidebar"] {
+  background: #ffffff !important;
+  border-right: 1px solid #d8d8d8;
+}
+
+section[data-testid="stSidebar"] .block-container {
+  padding-top: 1.5rem;
+}
+
+div[data-testid="stChatMessage"] {
+  border: 1px solid #d8d8d8;
+  border-radius: 0 !important;
+  background: #ffffff;
+}
+
+div[data-testid="stChatInput"] textarea {
+  border-radius: 0 !important;
+  border: 2px solid var(--gds-text) !important;
+}
+
+div[data-testid="stProgressBar"] > div > div {
+  background: var(--gds-success) !important;
+}
+
+@media (max-width: 48rem) {
+  main .block-container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 1.2rem;
+  }
+
+  h1 {
+    font-size: clamp(1.8rem, 7vw, 2.3rem);
+  }
+
+  .govuk-phase-banner {
+    font-size: 0.9rem;
+  }
+}

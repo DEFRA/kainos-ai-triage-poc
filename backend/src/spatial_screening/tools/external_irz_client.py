@@ -1,5 +1,8 @@
 import requests
 
+from backend.src.utilities.http import create_system_trust_session
+
+
 class ExternalIRZClient:
     def __init__(self):
         self.base_url = (
@@ -10,7 +13,7 @@ class ExternalIRZClient:
         self.headers = {
             "Accept": "application/json"
         }
-        self.session = requests.Session()
+        self.session = create_system_trust_session()
 
     def _get(self, path, timeout, **kwargs):
         response = self.session.get(

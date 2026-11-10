@@ -7,6 +7,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import requests
 
+from backend.src.utilities.http import create_system_trust_session
+
 _IRZ_CODE_TABLE_PATH = (
     Path(__file__).resolve().parents[4] / "data" / "irz_code_table.csv"
 )
@@ -238,9 +240,10 @@ def check_strategic(url):
 
 def _get_html(url):
     url = "".join(url.split())
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    return response.text
+    with create_system_trust_session() as session:
+        response = session.get(url, timeout=30)
+        response.raise_for_status()
+        return response.text
 
 def _questions(html):
     soup = BeautifulSoup(html, "html.parser")

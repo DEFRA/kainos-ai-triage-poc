@@ -11,7 +11,7 @@ For each category, explain the selection briefly and include traceable supportin
 - Low: significant uncertainty remains.
 
 Return JSON only with this structure:
-
+```
 {
   "answers": [
     {
@@ -26,5 +26,5 @@ Return JSON only with this structure:
     }
   ]
 }
-
+```
 Return exactly one answer for every supplied category and no additional fields.
