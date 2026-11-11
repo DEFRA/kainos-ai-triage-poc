@@ -39,7 +39,7 @@ packages = [
     "backend/orchestrator",
     "backend/src/ai_triage",
     "backend/src/document_screening",
-    "backend/src/email_intake",
+    "backend/src/case_intake",
     "backend/src/spatial_screening",
     "backend/src/utilities",
 ]

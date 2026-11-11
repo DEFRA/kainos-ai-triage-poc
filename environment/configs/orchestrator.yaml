@@ -1,0 +1,8 @@
+required_fields:
+  case_intake:
+    - reference_id
+    - lpa_website
+  document_screening:
+    - polygon
+  spatial_screening:
+    - polygon
