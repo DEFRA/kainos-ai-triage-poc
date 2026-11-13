@@ -6,26 +6,55 @@ The project requires Python 3.12 or newer; local development is pinned to
 Python 3.12.12. Use `uv sync` to create the project environment and install
 dependencies.
 
-## Consultation API
+## Run a consultation
 
-The synchronous FastAPI service runs intake, document screening, and spatial
-screening. Set `AI_TRIAGE_MODEL_CONFIG` to a model configuration path, then run
-the API from the repository root:
+The API currently runs case intake, document screening, and spatial screening
+in order. Case intake is a placeholder that passes the submitted JSON through.
+The configured required fields are in
+[orchestrator.yaml](environment/configs/orchestrator.yaml); the current intake
+requires `reference_id` and `lpa_website`.
+
+1. Install the project with Python 3.12.12 and `uv sync`.
+2. Edit one of the model templates in `environment/model_configs/` with a real
+  model ID and endpoint or AWS region. The tracked files ending in
+  `-placeholder.yaml` are examples and are not directly runnable.
+3. Set `AI_TRIAGE_MODEL_CONFIG` to the absolute path of that model config, then
+  start the API from the repository root:
 
 ```sh
-export AI_TRIAGE_MODEL_CONFIG=environment/model_configs/your-model-config.yaml
+export AI_TRIAGE_MODEL_CONFIG="$PWD/environment/model_configs/your-model-config.yaml"
 uv run --python 3.12.12 uvicorn ai_triage.api:app --reload
 ```
 
-Submit case JSON to `POST /consultations`. The response contains the stage
-outputs, warnings, errors, and a run ID. Retrieve a saved response with
-`GET /consultations/{run_id}`. Run records and stage files are written under
-`data/runs/`. The current result structure is provisional; consultation
-classification rules and evidence fields have not yet been defined.
+4. Submit a case JSON object to `POST /consultations`, for example:
+
+```json
+{
+  "reference_id": "25/03341/CDPN",
+  "lpa_website": "https://planning.example.gov.uk/online-applications/"
+}
+```
+
+The response includes a `run_id`, each stage's output, and any errors. A failed
+stage stops the flow and returns the completed outputs and error details so far.
+Retrieve a saved run with `GET /consultations/{run_id}`. Run records and stage
+files are written under `backend/data/runs/<run_id>/` by default.
+
+This PoC currently gathers screening evidence; it does not classify the
+consultation outcome or send a response. Runs are synchronous and saved to the
+local filesystem, so this storage is not durable across ephemeral deployments.
+For container deployments, install current CA certificates in the image and
+add any organization-specific roots required to reach external planning sites.
+
+The current Python package layout is under `backend/`; stage-specific
+configuration is under `environment/configs/`, and model connection settings
+are under `environment/model_configs/`.
+
+## Component references
 
 ## Synchronous LLM client
 
-The [shared LLM client](src/shared/llm_client.py) supports:
+The [LLM client](backend/src/utilities/llm_client.py) supports:
 
 - **Ollama**, using its OpenAI-compatible Chat Completions endpoint.
 - **Amazon Bedrock**, using the `bedrock-runtime` Converse API.
@@ -36,13 +65,13 @@ in a Python script or notebook using the project environment:
 ```python
 from pathlib import Path
 
-from shared.llm_client import LLMClient
+from backend.src.utilities.llm_client import LLMClient
 
 system_prompt = Path(
-  "src/spatial_screening/prompts/answer_irz_question.md"
+  "backend/src/spatial_screening/prompts/answer_irz_category.md"
 ).read_text(encoding="utf-8")
 
-with LLMClient("environment/model_configs/ollama.yaml") as client:
+with LLMClient("environment/model_configs/ollama-placeholder.yaml") as client:
     answer = client.generate(
         "Question: ...\nEvidence: ...",
         system_prompt=system_prompt,
@@ -61,8 +90,8 @@ relative paths resolve against the current working directory. Prompt loading and
 templating stay with the caller; the client accepts text with optional local
 file attachments and keeps no chat history.
 
-See [Ollama config](environment/model_configs/ollama.yaml) and
-[Bedrock config](environment/model_configs/bedrock.yaml).
+See the [Ollama template](environment/model_configs/ollama-placeholder.yaml) and
+[Bedrock template](environment/model_configs/bedrock-placeholder.yaml).
 
 | Field | Meaning |
 | --- | --- |
@@ -87,7 +116,7 @@ Pass an ordered sequence of local file paths using `attachments`. Omitting it,
 passing `None`, or passing an empty list preserves text-only requests:
 
 ```python
-with LLMClient("environment/model_configs/ollama.yaml") as client:
+with LLMClient("environment/model_configs/ollama-placeholder.yaml") as client:
     answer = client.generate(
         "Extract the requested facts from these pages.",
         system_prompt=system_prompt,
@@ -114,8 +143,7 @@ or file/image-count limits propagate unchanged. The client does not estimate
 multimodal context usage, split requests, extract PDF text, or render PDF pages.
 Task prompts and any output parsing remain the caller's responsibility.
 
-Imports now use `from shared.llm_client import LLMClient`; the former
-screening-specific module has been removed. Existing model YAML fields,
+The LLM client is shared by the screening stages. Existing model YAML fields,
 including `api_style` and `thinking_level`, are unchanged.
 
 ### Ollama setup
@@ -165,18 +193,18 @@ Levels are not directly comparable across models. Fixed thinking budgets,
 explicit thinking-disable controls, other providers, streaming, and async
 requests are outside this initial implementation.
 
-Prompts stay under [spatial_screening/prompts](src/spatial_screening/prompts/), not in
+Prompts stay under [spatial_screening/prompts](backend/src/spatial_screening/prompts/), not in
 environment configuration. The broader [proposed structure](structure.md)
 describes future stages; this implementation uses the current source layout.
 
 ## PDF document preparation
 
-The [shared PDF parser](src/shared/document_parser.py) uses
+The [PDF parser](backend/src/utilities/document_parser.py) uses
 `pypdfium2` for PDF text extraction and page rendering, with Pillow for PNG
 encoding. It does not call an LLM, perform OCR, or orchestrate screening.
 
 ```python
-from shared.document_parser import parse_pdf
+from backend.src.utilities.document_parser import parse_pdf
 
 pages = parse_pdf("application.pdf", "rendered-pages", dpi=150)
 for page in pages:
@@ -203,7 +231,7 @@ results belong to the document agent below.
 
 ## Document screening
 
-The [original document-agent implementation](src/document_screening/implementations/document_agent.py)
+The [original document-agent implementation](backend/src/document_screening/implementations/document_agent.py)
 resolves a consultation reference, runs the LPA client's retrieval flow, prepares
 PDF pages, and submits all evidence together through `LLMClient`. Select a
 vision-capable model in the model YAML before processing PDF page images or other
@@ -260,7 +288,7 @@ rate limits.
 ```python
 from datetime import date
 
-from document_screening.implementations.document_agent import run_document_screening
+from backend.src.document_screening.implementations.document_agent import run_document_screening
 
 result = run_document_screening(
   reference="25/03341/CDPN",
@@ -284,7 +312,7 @@ and model's supported inputs. No documents/pages are silently dropped, no
 automatic splitting or model retries are added, and all evidence uses one model
 call. Council HTTP requests use the bounded 429 retries described above.
 
-The default [screening prompt](src/document_screening/prompts/screen_documents.md)
+The default [screening prompt](backend/src/document_screening/prompts/screen_documents.md)
 requests a JSON object of development and environmental evidence with source
 references rather than a final consultation decision. Pass `prompt_path` to use
 another prompt, or edit the default file. The agent parses the response as JSON
@@ -298,11 +326,11 @@ repaired or retried.
 
 ### Prioritized document screening
 
-The separate [prioritized implementation](src/document_screening/implementations/prioritized_document_agent.py)
+The separate [prioritized implementation](backend/src/document_screening/implementations/prioritized_document_agent.py)
 retrieves and saves application metadata first, asks the model to rank each
 document, downloads selected documents concurrently, then extracts and screens
 only successful downloads. The ranking prompt is
-[prioritize_documents.md](src/document_screening/prompts/prioritize_documents.md).
+[prioritize_documents.md](backend/src/document_screening/prompts/prioritize_documents.md).
 Model or invalid-ranking failures raise before downloading. Uncertain rankings
 are forced to `must`. Per-document download failures warn and are recorded in
 metadata as `downloaded: false` with a `download_error`; they do not stop other
@@ -317,7 +345,7 @@ excluded, while same-day documents are included. Documents with missing or
 unrecognized dates are retained with a warning.
 
 ```python
-from document_screening.implementations.prioritized_document_agent import (
+from backend.src.document_screening.implementations.prioritized_document_agent import (
   run_prioritized_document_screening,
 )
 
@@ -352,6 +380,7 @@ still propagate; no oversized request is silently truncated by the agent.
 
 ## Tests
 
-Run `uv run python -m unittest discover -s tests -v`.
-Tests use an in-memory Ollama HTTP transport and Bedrock SDK stubs; they require
-neither a running model server nor AWS credentials and make no inference calls.
+Run the focused orchestration tests with
+`uv run python -m unittest discover -s tests -p test_orchestrator.py -v`.
+Some legacy integration tests may require additional setup; avoid running them
+against live services unintentionally.

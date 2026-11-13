@@ -40,6 +40,7 @@ packages = [
     "backend/src/ai_triage",
     "backend/src/document_screening",
     "backend/src/case_intake",
+    "backend/src/decision",
     "backend/src/spatial_screening",
     "backend/src/utilities",
 ]

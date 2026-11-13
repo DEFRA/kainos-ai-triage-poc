@@ -136,6 +136,7 @@ def run_irz_code_spatial_screening(
 		_BEST_AND_MOST_VERSATILE_LAND_LAYER,
 		polygon,
 		polygon_crs="EPSG:27700",
+		where="CAT2 IN (1, 2, 3)",
 	)
 	print(
 		"[spatial screening] Completed Best and Most Versatile Land check: "
@@ -154,6 +155,7 @@ def run_irz_code_spatial_screening(
 	)
 	best_and_most_versatile_land_check = {
 		"intersects": best_and_most_versatile_land_result["intersects"],
+		"overlap_area_hectares": best_and_most_versatile_land_result["intersection_area_m2"] / 10000,
 		"source_layer": _BEST_AND_MOST_VERSATILE_LAND_LAYER,
 	}
 	protected_landscape_check = {

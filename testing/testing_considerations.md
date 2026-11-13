@@ -1,0 +1,1 @@
+1. Since not all checklist items are in-scope, we may correctly classify all in-scope checklist items as "No" but get the overall (necessary/unnecessary) classification wrong since an out-of-scope checklist item is "Yes". Consider recalculating classifications from the in-scope checklist items.

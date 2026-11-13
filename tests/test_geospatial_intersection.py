@@ -75,6 +75,40 @@ class GeospatialIntersectionTests(unittest.TestCase):
 		self.assertEqual(result["repaired_geometries"], [])
 		json.dumps(result)
 
+	def test_category_filter_limits_union_area_and_preserves_boundary_contact(self):
+		with TemporaryDirectory() as directory:
+			data_source = Path(directory) / "categories.gpkg"
+			with fiona.open(
+				data_source, "w", driver="GPKG", layer="regions",
+				schema={"geometry": "Polygon", "properties": {"CAT2": "int"}},
+				crs="EPSG:27700",
+			) as layer:
+				for category, bounds in (
+					(1, (0, 0, 60, 100)),
+					(2, (40, 0, 80, 100)),
+					(3, (70, 0, 90, 100)),
+					(4, (0, 0, 100, 100)),
+					(5, (0, 0, 100, 100)),
+				):
+					layer.write({
+						"geometry": mapping(Polygon.from_bounds(*bounds)),
+						"properties": {"CAT2": category},
+					})
+			for bounds, intersects, area, feature_count in (
+				((0, 0, 100, 100), True, 9000.0, 3),
+				((90, 0, 100, 100), True, 0.0, 1),
+				((95, 0, 100, 100), False, 0.0, 0),
+			):
+				with self.subTest(bounds=bounds):
+					result = intersect_polygon_with_layer(
+						data_source, "regions",
+						[list(point) for point in Polygon.from_bounds(*bounds).exterior.coords],
+						where="CAT2 IN (1, 2, 3)",
+					)
+					self.assertEqual(result["intersects"], intersects)
+					self.assertEqual(result["intersection_area_m2"], area)
+					self.assertEqual(len(result["intersecting_regions"]), feature_count)
+
 	def test_repairs_and_reports_invalid_candidate_geometry(self):
 		with TemporaryDirectory() as directory:
 			data_source = Path(directory) / "invalid.gpkg"

@@ -1,0 +1,158 @@
+{
+  "case_intake": {
+    "eia_screening": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No EIA screening indication identified.", "evidence": []
+    },
+    "eia_scoping": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No EIA scoping indication identified.", "evidence": []
+    },
+    "amendment": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No amendment request identified.", "evidence": []
+    },
+    "conditions": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No conditions request identified.", "evidence": []
+    },
+    "pre_application": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No pre-application indication identified.", "evidence": []
+    },
+    "prior_approval": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No prior approval or notification identified.", "evidence": []
+    },
+    "minerals_waste_existing": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No existing minerals or waste site changes identified.", "evidence": []
+    },
+    "minerals_waste_new": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No new minerals or waste proposal identified.", "evidence": []
+    }
+  },
+  "document_screening": {
+    "minerals_waste_existing": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "The documents describe housing development.", "evidence": []
+    },
+    "minerals_waste_new": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "The documents describe housing development.", "evidence": []
+    }
+  },
+  "spatial_screening": {
+    "best_and_most_versatile_land": {
+      "intersects": true,
+      "overlap_area_hectares": 19.4
+    },
+    "answers": [
+    {
+      "category": "All Consultations",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The provided context does not indicate that this consultation falls into any of the specified development categories.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Infrastructure",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application relates to a discharge of condition relating to EV chargers, so is not a primary infrastructure proposal as defined by the options.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Wind or Solar",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference any wind or solar energy generation.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "MinOilGas",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference any quarrying or oil/gas exploration/extraction.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Rural Non Residential",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application does not indicate a new non-residential development.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Residential",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference any residential development.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Rural Residential",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference any rural residential development.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Air Pollution",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference livestock or poultry units, slurry lagoons etc.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Combustion",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference combustion processes.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Waste",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference waste management facilities.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Compost",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference composting facilities.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Discharge",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "Whilst the application *is* a discharge of condition, this category is not seeking to identify discharge of condition applications; it is seeking to identify development *types*.",
+      "supporting_evidence": []
+    },
+    {
+      "category": "Water Supply",
+      "value": 0,
+      "text": "Not applicable",
+      "confidence": "High",
+      "reasoning": "The application details do not reference any water supply infrastructure.",
+      "supporting_evidence": []
+    }
+  ]
+  }
+}
