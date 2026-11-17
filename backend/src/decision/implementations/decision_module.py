@@ -36,11 +36,9 @@ def _checklist_item(guidance_id: str, findings: list[tuple[str, dict, bool]]) ->
         if not isinstance(items, list):
             raise ValueError(f"{guidance_id}: evidence must be a list.")
         for item in items:
-            if not isinstance(item, dict) or any(
-                not isinstance(item.get(field), str) for field in ("source", "quote")
-            ):
-                raise ValueError(f"{guidance_id}: evidence needs source and quote strings.")
-            evidence.append({"stage": stage, "source": item["source"], "quote": item["quote"]})
+            if not isinstance(item, dict):
+                raise ValueError(f"{guidance_id}: each evidence item must be a mapping.")
+            evidence.append({"stage": stage, "evidence": item})
     return {
         "guidance_id": guidance_id,
         "answer": any(answer for answer, confidence in outcomes),
@@ -54,6 +52,7 @@ def run_decision(stage_outputs: dict) -> dict:
     """Evaluate 1b-1k; IRZ category coverage must be validated upstream.
 
     Signals are direct stage children with classification/reason/evidence/confidence.
+    Evidence entries are preserved in their stage-native shape and tagged with stage.
     OR rules use the highest known confidence among positive inputs, or the lowest
     among all negative inputs. An unknown negative confidence prevents an all-no
     confidence; unknown positives do not weaken another known positive. The same
@@ -69,7 +68,7 @@ def run_decision(stage_outputs: dict) -> dict:
     checklist = []
     signal_rules = (
         ("1b", ("eia_screening", "eia_scoping"), ("case_intake",)),
-        ("1c", ("amendment",), ("case_intake",)),
+        ("1c", ("amendment",), ("document_screening",)),
         ("1d", ("conditions",), ("case_intake",)),
         ("1e", ("pre_application",), ("case_intake",)),
         ("1f", ("prior_approval",), ("case_intake",)),
@@ -139,9 +138,7 @@ def run_decision(stage_outputs: dict) -> dict:
         finding = {
             "reason": answer.get("reasoning", ""),
             "confidence": confidence.lower() if confidence is not None else None,
-            "evidence": [
-                {"source": item["source"], "quote": item["evidence"]} for item in evidence
-            ],
+            "evidence": evidence,
         }
         irz_findings.append(("spatial_screening", finding, value > 0))
         if category == "All Consultations":

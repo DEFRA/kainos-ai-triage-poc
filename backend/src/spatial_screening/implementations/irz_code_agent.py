@@ -198,7 +198,6 @@ def run_irz_code_spatial_screening(
 	print("[spatial screening] Completed IRZ category answer generation.")
 
 	print("[spatial screening] Raw IRZ model response:")
-	print(response)
 	print("[spatial screening] Starting IRZ answer validation.")
 	answers = parse_irz_category_answers(response, categories)
 	for answer in answers:

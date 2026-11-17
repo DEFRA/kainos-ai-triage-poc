@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +10,103 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.src.ai_triage.api import create_app
 from orchestrator.orchestrator import run_consultation
+
+
+def make_case_intake(
+    reference_id="26/00123/FUL",
+    lpa_website="https://planning.example.org",
+    consultation_date=None,
+):
+    signal_fields = (
+        "eia_screening",
+        "eia_scoping",
+        "conditions",
+        "pre_application",
+        "prior_approval",
+        "minerals_waste_existing",
+        "minerals_waste_new",
+    )
+    case_intake = {
+        "lpa_reference_id": {
+            "value": reference_id,
+            "status": "stated",
+            "confidence": "high",
+            "reason": "Provided by case intake.",
+            "evidence": [],
+        },
+        "lpa_website": {
+            "value": lpa_website,
+            "status": "stated",
+            "confidence": "high",
+            "reason": "Provided by case intake.",
+            "evidence": [],
+        },
+        "signals": {
+            name: {
+                "classification": "no_signal",
+                "confidence": "high",
+                "reason": "No signal identified.",
+                "evidence": [],
+            }
+            for name in signal_fields
+        },
+    }
+    if consultation_date is not None:
+        case_intake["consultation_date"] = {
+            "value": consultation_date,
+            "status": "stated",
+            "confidence": "high",
+            "reason": "Provided by case intake.",
+            "evidence": [],
+        }
+    return case_intake
+
+
+def make_document_result(ring):
+    signal_fields = (
+        "amendment",
+        "minerals_waste_existing",
+        "minerals_waste_new",
+    )
+    return {
+        "final_output": {
+            "polygon": {
+                "polygon": [ring],
+                "polygon_source": "lpa_maps",
+                "polygon_confidence": "high",
+                "polygon_area_source": "lpa_polygon",
+            },
+            "consultation_type_signals": {
+                name: {
+                    "classification": "no_signal",
+                    "confidence": "high",
+                    "reason": "No signal identified.",
+                    "evidence": [],
+                }
+                for name in signal_fields
+            },
+        },
+    }
+
+
+def make_spatial_result(ring):
+    return {
+        "polygon": ring,
+        "geospatial_checks": {
+            "best_and_most_versatile_land": {
+                "intersects": False,
+                "overlap_area_hectares": 0.0,
+            },
+        },
+        "answers": [{
+            "category": "All Consultations",
+            "value": 0,
+            "text": "Not applicable",
+            "confidence": "High",
+            "reasoning": "No applicable category identified.",
+            "supporting_evidence": [],
+        }],
+    }
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -26,7 +124,7 @@ class OrchestratorTests(unittest.TestCase):
             )
 
         document_screening.assert_not_called()
-        self.assertIn("reference_id", result["errors"][0]["message"])
+        self.assertIn("lpa_reference_id", result["errors"][0]["message"])
         self.assertIn("lpa_website", result["errors"][0]["message"])
         self.assertTrue((self.output_directory / "run.json").is_file())
 
@@ -36,13 +134,11 @@ class OrchestratorTests(unittest.TestCase):
             "required_fields:\n"
             "  case_intake: [configured_field]\n"
             "  document_screening: [polygon]\n"
-            "  spatial_screening: [polygon]\n",
+            "  spatial_screening: [polygon]\n"
+            "  decision: [classification, checklist]\n",
             encoding="utf-8",
         )
-        case_data = {
-            "reference_id": "26/00123/FUL",
-            "lpa_website": "https://planning.example.org",
-        }
+        case_data = make_case_intake()
         with (
             patch("orchestrator.orchestrator._DEFAULT_ORCHESTRATOR_CONFIG", config_path),
             patch("orchestrator.orchestrator.run_case_intake", return_value=case_data),
@@ -56,11 +152,7 @@ class OrchestratorTests(unittest.TestCase):
 
     def test_document_error_is_saved_and_stops_before_spatial_screening(self):
         polygon = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
-        case_data = {
-            "reference_id": "26/00123/FUL",
-            "lpa_website": "https://planning.example.org",
-            "polygon": polygon,
-        }
+        case_data = make_case_intake()
         with (
             patch(
                 "orchestrator.orchestrator.run_document_screening",
@@ -84,10 +176,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(saved_run, result)
 
     def test_spatial_screening_is_skipped_when_no_polygon_is_available(self):
-        case_data = {
-            "reference_id": "26/00123/FUL",
-            "lpa_website": "https://planning.example.org",
-        }
+        case_data = make_case_intake()
         with (
             patch(
                 "orchestrator.orchestrator.run_document_screening",
@@ -106,21 +195,15 @@ class OrchestratorTests(unittest.TestCase):
 
     def test_single_lpa_polygon_ring_is_passed_to_spatial_screening(self):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
-        case_data = {
-            "reference_id": "26/00123/FUL",
-            "lpa_website": "https://planning.example.org",
-        }
+        case_data = make_case_intake()
         with (
             patch(
                 "orchestrator.orchestrator.run_document_screening",
-                return_value={
-                    "metadata": {"polygon": [ring]},
-                    "final_output": {"polygon": [ring]},
-                },
+                return_value=make_document_result(ring),
             ),
             patch(
                 "orchestrator.orchestrator.run_irz_code_spatial_screening",
-                return_value={"polygon": ring, "answers": []},
+                return_value=make_spatial_result(ring),
             ) as spatial_screening,
         ):
             result = run_consultation(
@@ -128,14 +211,20 @@ class OrchestratorTests(unittest.TestCase):
             )
 
         self.assertEqual(spatial_screening.call_args.kwargs["polygon"], ring)
+        self.assertEqual(
+            result["stage_outputs"]["document_screening"]["final_output"]["polygon"],
+            {
+                "polygon": [ring],
+                "polygon_source": "lpa_maps",
+                "polygon_confidence": "high",
+                "polygon_area_source": "lpa_polygon",
+            },
+        )
         self.assertEqual(result["errors"], [])
 
     def test_multiple_lpa_polygon_rings_stop_before_spatial_with_one_error(self):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
-        case_data = {
-            "reference_id": "26/00123/FUL",
-            "lpa_website": "https://planning.example.org",
-        }
+        case_data = make_case_intake()
         with (
             patch(
                 "orchestrator.orchestrator.run_document_screening",
@@ -166,16 +255,16 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(len(result["run_id"]), 32)
 
     def test_stage_validation_and_spatial_failures_return_saved_partial_report(self):
-        case_intake = {"reference_id": "new-reference", "lpa_website": "https://planning.example.org"}
+        case_intake = make_case_intake(reference_id="new-reference")
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
-        document_result = {"final_output": {"polygon": [ring]}}
+        document_result = make_document_result(ring)
         scenarios = [
             (None, None, None, "case_intake"),
             (case_intake, None, None, "document_screening"),
             (case_intake, {"unsupported_value": object()}, None, "document_screening"),
             (case_intake, document_result, RuntimeError("IRZ unavailable"), "spatial_screening"),
             (case_intake, document_result, {"polygon": []}, "spatial_screening"),
-            (case_intake, document_result, {"polygon": ring}, None),
+            (case_intake, document_result, make_spatial_result(ring), None),
         ]
         for intake, documents, spatial, expected_error in scenarios:
             with self.subTest(expected_error=expected_error, spatial=spatial):
@@ -201,36 +290,233 @@ class OrchestratorTests(unittest.TestCase):
                 if expected_error in {"case_intake", "document_screening"}:
                     spatial_call.assert_not_called()
 
-    def test_completed_stages_are_saved_before_the_next_stage_starts(self):
-        case_data = {"reference_id": "reference", "lpa_website": "https://planning.example.org"}
+    def test_document_polygon_is_forwarded_to_spatial_screening(self):
+        case_data = make_case_intake(reference_id="reference")
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
-        document_result = {"final_output": {"polygon": [ring]}}
-
-        def screen_documents(**kwargs):
-            saved = json.loads((self.output_directory / "run.json").read_text())
-            self.assertEqual(saved["stage_outputs"]["case_intake"], case_data)
-            return document_result
-
-        def screen_spatially(**kwargs):
-            saved = json.loads((self.output_directory / "run.json").read_text())
-            self.assertEqual(saved["stage_outputs"]["document_screening"], document_result)
-            return {"polygon": ring}
+        document_result = make_document_result(ring)
 
         with (
-            patch("orchestrator.orchestrator.run_document_screening", side_effect=screen_documents),
-            patch("orchestrator.orchestrator.run_irz_code_spatial_screening", side_effect=screen_spatially),
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value=document_result,
+            ) as document_screening,
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                return_value=make_spatial_result(ring),
+            ) as spatial_screening,
         ):
             result = run_consultation(case_data, "model.yaml", self.output_directory)
 
         self.assertEqual(result["errors"], [])
+        self.assertEqual(spatial_screening.call_args.kwargs["polygon"], ring)
+        self.assertEqual(
+            spatial_screening.call_args.kwargs["context"]["document_screening"]["polygon"],
+            document_result["final_output"]["polygon"],
+        )
+        self.assertNotIn("ignore_after", document_screening.call_args.kwargs)
 
-    def test_save_failure_is_returned_without_starting_document_screening(self):
-        self.output_directory.write_text("Not a directory", encoding="utf-8")
-        case_data = {"reference_id": "reference", "lpa_website": "https://planning.example.org"}
-        with patch("orchestrator.orchestrator.run_document_screening") as documents:
+    def test_decision_stage_receives_adapted_outputs_and_saves_result(self):
+        case_intake = make_case_intake(reference_id="reference")
+        case_intake["signals"]["conditions"] = {
+            "classification": "yes",
+            "confidence": "high",
+            "reason": "A condition is referenced.",
+            "evidence": [{"source": "intake email", "quote": "Condition 3"}],
+        }
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        document_result = make_document_result(ring)
+        document_signals = document_result["final_output"]["consultation_type_signals"]
+        document_signals["amendment"]["classification"] = "yes"
+        document_signals["amendment"]["evidence"] = [{
+            "document_id": "APP-1",
+            "page": 2,
+            "quote": "Revised application documents",
+        }]
+        spatial_result = make_spatial_result(ring)
+        spatial_result["geospatial_checks"]["best_and_most_versatile_land"].update(
+            intersects=True, overlap_area_hectares=23.4,
+        )
+        decision_result = {
+            "classification": "necessary",
+            "confidence": "high",
+            "checklist": [{"guidance_id": "1c", "answer": True}],
+        }
+
+        with (
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value=document_result,
+            ),
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                return_value=spatial_result,
+            ),
+            patch(
+                "orchestrator.orchestrator.run_decision",
+                return_value=decision_result,
+            ) as decision,
+        ):
+            result = run_consultation(case_intake, "model.yaml", self.output_directory)
+
+        decision.assert_called_once_with({
+            "case_intake": case_intake["signals"],
+            "document_screening": {
+                "amendment": document_signals["amendment"],
+                "minerals_waste_existing": document_signals["minerals_waste_existing"],
+                "minerals_waste_new": document_signals["minerals_waste_new"],
+            },
+            "spatial_screening": {
+                "best_and_most_versatile_land": spatial_result["geospatial_checks"]["best_and_most_versatile_land"],
+                "answers": spatial_result["answers"],
+            },
+        })
+        self.assertEqual(result["stage_outputs"]["decision"], decision_result)
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            json.loads((self.output_directory / "run.json").read_text()),
+            result,
+        )
+
+    def test_spatial_decision_inputs_are_required_before_decision(self):
+        case_intake = make_case_intake()
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        for missing_field in ("best_and_most_versatile_land", "answers"):
+            with self.subTest(missing_field=missing_field):
+                spatial_result = make_spatial_result(ring)
+                if missing_field == "best_and_most_versatile_land":
+                    del spatial_result["geospatial_checks"][missing_field]
+                else:
+                    del spatial_result[missing_field]
+                with (
+                    patch(
+                        "orchestrator.orchestrator.run_document_screening",
+                        return_value=make_document_result(ring),
+                    ),
+                    patch(
+                        "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                        return_value=spatial_result,
+                    ),
+                    patch("orchestrator.orchestrator.run_decision") as decision,
+                ):
+                    result = run_consultation(
+                        case_intake, "model.yaml", self.output_directory
+                    )
+
+                decision.assert_not_called()
+                self.assertEqual(result["errors"][0]["stage"], "spatial_screening")
+                self.assertIn(missing_field, result["errors"][0]["message"])
+
+    def test_decision_error_is_saved_after_spatial_screening(self):
+        case_intake = make_case_intake()
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        with (
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value=make_document_result(ring),
+            ),
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                return_value=make_spatial_result(ring),
+            ) as spatial,
+            patch(
+                "orchestrator.orchestrator.run_decision",
+                side_effect=ValueError("Invalid decision evidence"),
+            ),
+        ):
+            result = run_consultation(case_intake, "model.yaml", self.output_directory)
+
+        spatial.assert_called_once()
+        self.assertEqual(result["errors"][0]["stage"], "decision")
+        self.assertEqual(result["stage_outputs"]["decision"], {})
+        self.assertEqual(json.loads((self.output_directory / "run.json").read_text()), result)
+
+    def test_stated_consultation_date_is_passed_as_ignore_after(self):
+        case_data = make_case_intake(consultation_date="2026-10-21")
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        document_result = make_document_result(ring)
+        with (
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value=document_result,
+            ) as document_screening,
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                return_value=make_spatial_result(ring),
+            ),
+        ):
             result = run_consultation(case_data, "model.yaml", self.output_directory)
 
-        documents.assert_not_called()
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            document_screening.call_args.kwargs["ignore_after"],
+            date(2026, 10, 21),
+        )
+
+    def test_malformed_stated_consultation_date_stops_at_case_intake(self):
+        case_data = make_case_intake(consultation_date="21/10/2026")
+        with patch(
+            "orchestrator.orchestrator.run_document_screening"
+        ) as document_screening:
+            result = run_consultation(case_data, "model.yaml", self.output_directory)
+
+        document_screening.assert_not_called()
+        self.assertEqual(result["errors"][0]["stage"], "case_intake")
+        self.assertIn("YYYY-MM-DD", result["errors"][0]["message"])
+
+    def test_document_result_without_final_output_is_rejected(self):
+        case_data = make_case_intake()
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        with (
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value={"metadata": {"polygon": [ring]}},
+            ),
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                return_value={"polygon": ring},
+            ) as spatial_screening,
+        ):
+            result = run_consultation(case_data, "model.yaml", self.output_directory)
+
+        self.assertEqual(result["errors"][0]["stage"], "document_screening")
+        self.assertIn("final_output", result["errors"][0]["message"])
+        spatial_screening.assert_not_called()
+
+    def test_final_output_rejects_raw_polygon_rings(self):
+        case_data = make_case_intake()
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        with (
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value={"final_output": {"polygon": [ring]}},
+            ),
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening"
+            ) as spatial_screening,
+        ):
+            result = run_consultation(case_data, "model.yaml", self.output_directory)
+
+        self.assertEqual(result["errors"][0]["stage"], "document_screening")
+        self.assertIn("polygon must be an object", result["errors"][0]["message"])
+        spatial_screening.assert_not_called()
+
+    def test_final_save_failure_is_returned_after_spatial_screening(self):
+        self.output_directory.write_text("Not a directory", encoding="utf-8")
+        case_data = make_case_intake(reference_id="reference")
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        with (
+            patch(
+                "orchestrator.orchestrator.run_document_screening",
+                return_value=make_document_result(ring),
+            ),
+            patch(
+                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                return_value=make_spatial_result(ring),
+            ) as spatial_screening,
+        ):
+            result = run_consultation(case_data, "model.yaml", self.output_directory)
+
+        spatial_screening.assert_called_once()
         self.assertEqual(result["errors"][0]["stage"], "persistence")
 
 

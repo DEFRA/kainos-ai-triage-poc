@@ -8,11 +8,13 @@ dependencies.
 
 ## Run a consultation
 
-The API currently runs case intake, document screening, and spatial screening
-in order. Case intake is a placeholder that passes the submitted JSON through.
+The API currently runs case intake, document screening, spatial screening, and
+the consultation decision in order. Case intake is a placeholder that passes
+the submitted JSON through.
 The configured required fields are in
 [orchestrator.yaml](environment/configs/orchestrator.yaml); the current intake
-requires `reference_id` and `lpa_website`.
+requires Field objects for `lpa_reference_id` and `lpa_website`, plus the seven
+case-intake signals used by the decision stage.
 
 1. Install the project with Python 3.12.12 and `uv sync`.
 2. Edit one of the model templates in `environment/model_configs/` with a real
@@ -30,8 +32,29 @@ uv run --python 3.12.12 uvicorn ai_triage.api:app --reload
 
 ```json
 {
-  "reference_id": "25/03341/CDPN",
-  "lpa_website": "https://planning.example.gov.uk/online-applications/"
+  "lpa_reference_id": {
+    "value": "25/03341/CDPN",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Reference from the consultation.",
+    "evidence": []
+  },
+  "lpa_website": {
+    "value": "https://planning.example.gov.uk/online-applications/",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Planning authority website.",
+    "evidence": []
+  },
+  "signals": {
+    "eia_screening": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "eia_scoping": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "conditions": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "pre_application": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "prior_approval": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "minerals_waste_existing": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "minerals_waste_new": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []}
+  }
 }
 ```
 
@@ -40,9 +63,11 @@ stage stops the flow and returns the completed outputs and error details so far.
 Retrieve a saved run with `GET /consultations/{run_id}`. Run records and stage
 files are written under `backend/data/runs/<run_id>/` by default.
 
-This PoC currently gathers screening evidence; it does not classify the
-consultation outcome or send a response. Runs are synchronous and saved to the
-local filesystem, so this storage is not durable across ephemeral deployments.
+The decision stage applies the current consultation checklist and returns a
+`necessary` or `unnecessary` classification with its checklist evidence. This
+is a PoC decision aid; it does not send a response. Runs are synchronous and
+saved to the local filesystem, so this storage is not durable across ephemeral
+deployments.
 For container deployments, install current CA certificates in the image and
 add any organization-specific roots required to reach external planning sites.
 

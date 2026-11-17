@@ -8,10 +8,6 @@
       "classification": "no_signal", "confidence": "high",
       "reason": "No EIA scoping indication identified.", "evidence": []
     },
-    "amendment": {
-      "classification": "no_signal", "confidence": "high",
-      "reason": "No amendment request identified.", "evidence": []
-    },
     "conditions": {
       "classification": "no_signal", "confidence": "high",
       "reason": "No conditions request identified.", "evidence": []
@@ -34,6 +30,10 @@
     }
   },
   "document_screening": {
+    "amendment": {
+      "classification": "no_signal", "confidence": "high",
+      "reason": "No amendment request identified in the documents.", "evidence": []
+    },
     "minerals_waste_existing": {
       "classification": "no_signal", "confidence": "high",
       "reason": "The documents describe housing development.", "evidence": []

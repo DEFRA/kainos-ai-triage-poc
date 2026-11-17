@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 from backend.src.document_screening.implementations.document_agent import run_document_screening
 from backend.src.utilities.document_parser import ParsedPage
+from document_screening_fixtures import valid_document_findings
 
 
 class DocumentAgentTests(unittest.TestCase):
@@ -37,13 +38,7 @@ class DocumentAgentTests(unittest.TestCase):
         self.lpa = Mock()
         self.lpa.search.return_value = "KEY"
         self.lpa.get_metadata.return_value = self.metadata
-        self.document_findings = {
-            "completed_assessments": [],
-            "planning_permissions": [],
-            "location": {"coordinates": [], "addresses": []},
-            "other": [],
-            "limitations": [],
-        }
+        self.document_findings = valid_document_findings()
         self.llm = Mock()
         self.llm.config = SimpleNamespace(
             max_output_tokens=1500, provider="ollama", model="vision-model"
@@ -54,11 +49,11 @@ class DocumentAgentTests(unittest.TestCase):
         contexts = ExitStack()
         self.addCleanup(contexts.close)
         self.lpa_factory = contexts.enter_context(patch(
-            "document_screening.implementations.document_agent.PublicAccessClient",
+            "backend.src.document_screening.implementations.document_agent.PublicAccessClient",
             return_value=self.lpa,
         ))
         self.llm_factory = contexts.enter_context(patch(
-            "document_screening.implementations.document_agent.LLMClient"
+            "backend.src.document_screening.implementations.document_agent.LLMClient"
         ))
         self.llm_factory.return_value.__enter__.return_value = self.llm
         self.pages = [
@@ -72,7 +67,7 @@ class DocumentAgentTests(unittest.TestCase):
             ),
         ]
         self.parser = contexts.enter_context(patch(
-            "document_screening.implementations.document_agent.parse_pdf",
+            "backend.src.document_screening.implementations.document_agent.parse_pdf",
             return_value=self.pages,
         ))
 
@@ -116,7 +111,7 @@ class DocumentAgentTests(unittest.TestCase):
         self.assertIn("First page evidence", call.args[0])
         self.assertIn("Conversion of an office", call.args[0])
         self.assertNotIn("https://planning.test/files/123.pdf", call.args[0])
-        self.assertIn("not a final consultation decision", call.kwargs["system_prompt"])
+        self.assertIn("You do not decide whether", call.kwargs["system_prompt"])
         self.assertIn("Starting application search", progress.getvalue())
         self.assertIn("Completed document downloads", progress.getvalue())
         self.assertIn("Completed output save", progress.getvalue())
@@ -126,10 +121,23 @@ class DocumentAgentTests(unittest.TestCase):
         self.assertEqual(result["sources"][1]["attachment_number"], 3)
         self.assertEqual(result["metadata"], self.metadata)
         self.assertEqual(result["document_findings"], self.document_findings)
-        self.assertEqual(result["final_output"], {
+        expected_final_output = {
             **self.metadata,
             **self.document_findings,
-        })
+        }
+        expected_final_output["polygon"] = {
+            "polygon": [[
+                [499900.0, 199900.0],
+                [500100.0, 199900.0],
+                [500100.0, 200100.0],
+                [499900.0, 200100.0],
+                [499900.0, 199900.0],
+            ]],
+            "polygon_source": "document_coordinates",
+            "polygon_confidence": "medium",
+            "polygon_area_source": "document_site_area",
+        }
+        self.assertEqual(result["final_output"], expected_final_output)
         self.assertEqual(
             result["response"],
             "```json\n" + json.dumps(self.document_findings) + "\n```",
@@ -165,7 +173,7 @@ class DocumentAgentTests(unittest.TestCase):
             "Return the document findings as JSON.",
         )
         self.assertEqual(result["document_findings"], custom_output)
-        self.assertEqual(result["final_output"]["location"], {"coordinates": [], "addresses": []})
+        self.assertEqual(result["final_output"]["location"], self.document_findings["location"])
 
     def test_invalid_json_does_not_save_a_success_result(self):
         self.llm.generate.return_value = "Not JSON"

@@ -11,7 +11,12 @@ from backend.src.utilities.llm_client import LLMClient
 
 from backend.src.utilities.document_parser import parse_pdf
 from ..tools.lpa_client import PublicAccessClient
-from ..tools.utilities import merge_document_findings, parse_document_findings
+from ..tools.utilities import (
+    add_polygon_metadata,
+    load_default_polygon_area_square_metres,
+    merge_document_findings,
+    parse_document_findings,
+)
 
 
 _DOCUMENT_PROMPT = Path(__file__).parent.parent / "prompts" / "screen_documents.md"
@@ -140,6 +145,9 @@ def run_document_screening(
             f"Could not use the model response: {error} "
             f"Raw response saved to {response_path}."
         ) from error
+    final_output = add_polygon_metadata(
+        final_output, load_default_polygon_area_square_metres()
+    )
 
     result = {
         "reference": reference,

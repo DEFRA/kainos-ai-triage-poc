@@ -6,23 +6,33 @@ from backend.src.decision.implementations.decision_module import run_decision
 
 class DecisionModuleTests(unittest.TestCase):
     def setUp(self):
-        signal = {
+        intake_signal = {
             "classification": "no_signal",
             "confidence": "high",
             "reason": "No positive signal identified.",
             "evidence": [{"source": "consultation email", "quote": "Proposal description"}],
         }
+        document_signal = {
+            "classification": "no_signal",
+            "confidence": "high",
+            "reason": "No positive signal identified in the documents.",
+            "evidence": [{
+                "document_id": "APP-1",
+                "page": 2,
+                "quote": "Proposal description",
+            }],
+        }
         self.inputs = {
             "case_intake": {
-                field: copy.deepcopy(signal) for field in (
-                    "eia_screening", "eia_scoping", "amendment", "conditions",
+                field: copy.deepcopy(intake_signal) for field in (
+                    "eia_screening", "eia_scoping", "conditions",
                     "pre_application", "prior_approval", "minerals_waste_existing",
                     "minerals_waste_new",
                 )
             },
             "document_screening": {
-                field: copy.deepcopy(signal)
-                for field in ("minerals_waste_existing", "minerals_waste_new")
+                field: copy.deepcopy(document_signal)
+                for field in ("amendment", "minerals_waste_existing", "minerals_waste_new")
             },
             "spatial_screening": {
                 "best_and_most_versatile_land": {
@@ -88,12 +98,25 @@ class DecisionModuleTests(unittest.TestCase):
         self.assertIn("No positive signal identified.", signal_item["reason"])
         self.assertEqual(signal_item["confidence"], "high")
         self.assertEqual(signal_item["evidence"][0], {
-            "stage": "case_intake", "source": "consultation email", "quote": "Proposal description",
+            "stage": "case_intake",
+            "evidence": {"source": "consultation email", "quote": "Proposal description"},
         })
         irz_item = result["checklist"][-1]
         self.assertEqual(irz_item["confidence"], "high")
         self.assertEqual(irz_item["evidence"][0], {
-            "stage": "spatial_screening", "source": "planning statement", "quote": "Housing",
+            "stage": "spatial_screening",
+            "evidence": {"source": "planning statement", "evidence": "Housing"},
+        })
+        document_item = next(
+            item for item in result["checklist"] if item["guidance_id"] == "1c"
+        )
+        self.assertEqual(document_item["evidence"][0], {
+            "stage": "document_screening",
+            "evidence": {
+                "document_id": "APP-1",
+                "page": 2,
+                "quote": "Proposal description",
+            },
         })
 
     def test_item_confidence_does_not_change_classification(self):
@@ -159,7 +182,7 @@ class DecisionModuleTests(unittest.TestCase):
                 self.assertEqual(result["checklist"][-2]["confidence"], first_confidence.lower() if first_confidence else None)
 
     def test_necessary_confidence_uses_strongest_positive_item(self):
-        self.inputs["case_intake"]["amendment"].update(classification="yes", confidence="low")
+        self.inputs["document_screening"]["amendment"].update(classification="yes", confidence="low")
         self.inputs["case_intake"]["conditions"].update(classification="yes", confidence="medium")
         self.inputs["spatial_screening"]["best_and_most_versatile_land"].update(
             intersects=True, overlap_area_hectares=23.4
@@ -193,10 +216,10 @@ class DecisionModuleTests(unittest.TestCase):
     def test_invalid_or_missing_signal_is_an_error(self):
         for invalid in (None, {}, {"classification": "unknown"}, {"classification": True}):
             with self.subTest(invalid=invalid):
-                self.inputs["case_intake"]["amendment"] = invalid
+                self.inputs["document_screening"]["amendment"] = invalid
                 with self.assertRaises(ValueError):
                     run_decision(self.inputs)
-        del self.inputs["case_intake"]["amendment"]
+        del self.inputs["document_screening"]["amendment"]
         with self.assertRaises(ValueError):
             run_decision(self.inputs)
 
@@ -223,10 +246,10 @@ class DecisionModuleTests(unittest.TestCase):
                     run_decision(self.inputs)
 
     def test_invalid_metadata_is_an_error(self):
-        for field, value in (("confidence", "certain"), ("reason", None), ("evidence", [{}])):
+        for field, value in (("confidence", "certain"), ("reason", None), ("evidence", [None])):
             with self.subTest(field=field):
                 inputs = copy.deepcopy(self.inputs)
-                inputs["case_intake"]["amendment"][field] = value
+                inputs["document_screening"]["amendment"][field] = value
                 with self.assertRaises(ValueError):
                     run_decision(inputs)
 
