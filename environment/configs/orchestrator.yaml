@@ -1,0 +1,19 @@
+required_fields:
+  case_intake:
+    - lpa_reference_id                    # For document screening
+    - lpa_website                         # For document screening 
+    - signals.eia_screening               # For decision
+    - signals.eia_scoping                 # For decision
+    - signals.conditions                  # For decision
+    - signals.pre_application             # For decision
+    - signals.prior_approval              # For decision
+    - signals.minerals_waste_existing     # For decision
+    - signals.minerals_waste_new          # For decision
+  document_screening:
+    - polygon                             # For spatial screening
+  spatial_screening:
+    - geospatial_checks.best_and_most_versatile_land
+    - answers
+  decision:
+    - classification
+    - checklist

@@ -61,7 +61,7 @@ def parse_internal_irz_codes(internal_link):
 
 
 def map_internal_irz_codes(irz_codes, code_table_path=None):
-    """Map the union of positive IRZ code digits to available category options."""
+    """Map the lowest nonzero IRZ digit plus Not applicable for each category."""
     if not isinstance(irz_codes, list) or not irz_codes:
         raise ValueError("irz_codes must be a non-empty list of parsed records.")
 
@@ -99,11 +99,12 @@ def map_internal_irz_codes(irz_codes, code_table_path=None):
     categories = []
     for category_digit in range(1, 14):
         category = table[category_digit]
-        option_values = sorted({
+        nonzero_values = [
             int(record["irz_code"][category_digit - 1])
             for record in irz_codes
             if record["irz_code"][category_digit - 1] != "0"
-        })
+        ]
+        option_values = [min(nonzero_values)] if nonzero_values else []
         options = []
         for option_value in option_values:
             description = category["descriptions"][str(option_value)]

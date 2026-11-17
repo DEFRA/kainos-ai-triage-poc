@@ -3,7 +3,7 @@
 import json
 import warnings
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Optional, Union
 
@@ -12,7 +12,13 @@ import yaml
 from backend.src.utilities.document_parser import parse_pdf
 from backend.src.utilities.llm_client import LLMClient
 from ..tools.lpa_client import PublicAccessClient
-from ..tools.utilities import merge_document_findings, parse_document_findings
+from ..tools.utilities import (
+    DEFAULT_POLYGON_AREA_SQUARE_METRES,
+    add_polygon_metadata,
+    merge_document_findings,
+    parse_document_findings,
+    _validate_default_polygon_area,
+)
 
 
 _DEFAULT_IMPLEMENTATION_CONFIG = (
@@ -37,7 +43,11 @@ def _load_implementation_config(config_path: Union[str, Path]) -> dict:
             f"Implementation config {config_path} must contain 'document_screening' and 'lpa' mappings."
         )
     settings = config["document_screening"]
-    allowed = {"max_concurrent_downloads", "include_maybe", "ignore_after"}
+    allowed = {
+        "max_concurrent_downloads",
+        "include_maybe",
+        "default_polygon_area_square_metres",
+    }
     if not isinstance(settings, dict) or settings.keys() - allowed:
         raise ValueError(
             f"Implementation settings must be a mapping with only: {', '.join(sorted(allowed))}."
@@ -51,16 +61,12 @@ def _load_implementation_config(config_path: Union[str, Path]) -> dict:
     if type(include_maybe) is not bool:
         raise ValueError("include_maybe must be true or false.")
 
-    ignore_after = settings.get("ignore_after")
-    if isinstance(ignore_after, datetime):
-        raise ValueError("ignore_after must be a date, not a datetime.")
-    if isinstance(ignore_after, str):
-        try:
-            ignore_after = date.fromisoformat(ignore_after)
-        except ValueError as error:
-            raise ValueError("ignore_after must use YYYY-MM-DD format.") from error
-    elif ignore_after is not None and not isinstance(ignore_after, date):
-        raise ValueError("ignore_after must be a date or null.")
+    default_polygon_area_square_metres = _validate_default_polygon_area(
+        settings.get(
+            "default_polygon_area_square_metres",
+            DEFAULT_POLYGON_AREA_SQUARE_METRES,
+        )
+    )
 
     lpa_settings = config["lpa"]
     lpa_allowed = {
@@ -80,7 +86,7 @@ def _load_implementation_config(config_path: Union[str, Path]) -> dict:
     return {
         "max_concurrent_downloads": max_concurrent_downloads,
         "include_maybe": include_maybe,
-        "ignore_after": ignore_after,
+        "default_polygon_area_square_metres": default_polygon_area_square_metres,
         "lpa_settings": lpa_settings,
     }
 
@@ -161,6 +167,7 @@ def run_prioritized_document_screening(
     prompt_path: Optional[Union[str, Path]] = None,
     dpi: int = 150,
     context_limit: Optional[int] = None,
+    ignore_after: Optional[date] = None,
 ) -> dict:
     """Rank metadata first, download selected records concurrently, then screen them."""
     if context_limit is not None and (
@@ -195,7 +202,7 @@ def run_prioritized_document_screening(
         metadata = lpa_client.get_metadata(
             application_key,
             output_directory,
-            ignore_after=settings["ignore_after"],
+            ignore_after=ignore_after,
         )
         documents = metadata["documents"]
         print(
@@ -344,6 +351,10 @@ def run_prioritized_document_screening(
             f"Could not use the model response: {error} "
             f"Raw response saved to {response_path}."
         ) from error
+    final_output = add_polygon_metadata(
+        final_output,
+        settings["default_polygon_area_square_metres"],
+    )
 
     result = {
         "reference": reference,

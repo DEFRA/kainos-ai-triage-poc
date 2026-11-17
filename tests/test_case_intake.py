@@ -1,6 +1,6 @@
 import unittest
 
-from backend.src.email_intake import run_case_intake
+from backend.src.case_intake.implementations.placeholder import run_case_intake
 
 
 class CaseIntakeTests(unittest.TestCase):

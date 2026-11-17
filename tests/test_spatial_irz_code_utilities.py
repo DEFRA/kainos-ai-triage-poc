@@ -14,7 +14,7 @@ INTERNAL_LINK_WITH_THREE_RECORDS = (
 	"1005735,0300000500000,5,;"
 	"UK9006171,0000000000000,B1,21103"
 )
-INTERNAL_LINK_WITH_UNION_OPTIONS = (
+INTERNAL_LINK_WITH_MULTIPLE_OPTIONS = (
 	"https://irz.geodata.org.uk/IRZ_internal/IRZ.php?location=520045,445317"
 	"&point_txt=%20(API%20geometry%20centre)"
 	"&irzcode=1005735,0300000000000,7,;"
@@ -36,8 +36,8 @@ class InternalIRZCodeUtilityTests(unittest.TestCase):
 		})
 		self.assertEqual(records[2]["advice_reference"], "21103")
 
-	def test_parser_and_mapping_union_positive_options_from_all_records(self):
-		records = parse_internal_irz_codes(INTERNAL_LINK_WITH_UNION_OPTIONS)
+	def test_parser_and_mapping_keep_lowest_nonzero_option_and_zero(self):
+		records = parse_internal_irz_codes(INTERNAL_LINK_WITH_MULTIPLE_OPTIONS)
 		categories = map_internal_irz_codes(records)
 
 		self.assertEqual(len(categories), 13)
@@ -47,12 +47,34 @@ class InternalIRZCodeUtilityTests(unittest.TestCase):
 		)
 		self.assertEqual(
 			[value["value"] for value in infrastructure["options"]],
-			[1, 3, 0],
+			[1, 0],
 		)
 		self.assertEqual(
 			infrastructure["options"][-1],
 			{"value": 0, "text": "Not applicable"},
 		)
+
+	def test_each_category_uses_minimum_nonzero_or_zero_when_all_are_zero(self):
+		for values, expected in (
+			([1, 3], [1, 0]),
+			([0, 3], [3, 0]),
+			([2, 3], [2, 0]),
+			([0, 0], [0]),
+		):
+			with self.subTest(values=values):
+				records = [
+					{"irz_code": "0" + str(value) + "0" * 11}
+					for value in values
+				]
+				categories = map_internal_irz_codes(records)
+				infrastructure = next(
+					category for category in categories
+					if category["name"] == "Infrastructure"
+				)
+				self.assertEqual(
+					[option["value"] for option in infrastructure["options"]],
+					expected,
+				)
 
 	def test_strategic_lookup_uses_advice_reference_not_location_digits(self):
 		records = parse_internal_irz_codes(INTERNAL_LINK_WITH_THREE_RECORDS)

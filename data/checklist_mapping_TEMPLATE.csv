@@ -1,0 +1,25 @@
+﻿Guidance ,Source ,Stage,Field,rule,notes,,,
+1b ,Is this consultation an EIA Screening or Scoping Opinion?  ,case_intake,"signal.eia_scoping, signal.eia_screening","if signal.eia_scoping == ""yes"" or if signal.eia_screening == ""yes"" -> yes, if signal.eia_scoping==""no_signal "" and if signal.eia_screening==""no_signal "" -> no",,,,
+1c ,Is this an amendment request? ,case_intake,signal.amendment,"if signal.amendment == ""yes"" -> yes, if signal.amendment==""no_signal "" -> no",,,,
+1d ,Is this a conditions request? ,case_intake,signal.conditions,"if signal.conditions == ""yes"" -> yes, if signal.conditions==""no_signal "" -> no",,,,
+1e ,Is this a pre-app consultation? ,case_intake,signal.pre_application,"if signal.pre_application == ""yes"" -> yes, if signal.pre_application==""no_signal "" -> no",,,,
+1f ,Is this a Prior Approval or Prior Notification?  ,case_intake,signal.prior_approval,"if signal.prior_approval == ""yes"" -> yes, if signal.prior_approval==""no_signal "" -> no",,,,
+1g ,Does the proposal relate to the reclamation and /or other changes within an existing waste/minerals site (except time variations)?  ,"case_intake, document_screening",signal.minerals_waste_existing,"if signal.minerals_waste_existing == ""yes"" -> yes, if signal.minerals_waste_existing==""no_signal "" -> no","This could be extracted from both case_intake and document_screening. The rule will check:
+- If ""yes"" for both -> yes
+- If ""no_signal"" for both -> no
+- If any is ""yes"" -> yes",,,
+1h ,Does the consultation relate to a new minerals or waste proposal on an area over 5ha?  ,"case_intake, document_screening",signal.minerals_waste_new,"if signal.minerals_waste_new == ""yes"" -> yes, if signal.minerals_waste_new==""no_signal "" -> no","This could be extracted from both case_intake and document_screening. The rule will check:
+- If ""yes"" for both -> yes
+- If ""no_signal"" for both -> no
+- If any is ""yes"" -> yes",,,
+1i ,Does the consultation have the potential for the loss of over 20ha of agricultural land?  ,spatial_screening,best_and_most_versatile_land,best_and_most_versatile_land.intersects == true and best_and_most_versatile_land.overlap_area_hectares >20 -> yes,Review intersects flag to be triggered by 20ha of agricultural land,,,
+1j ,Does the proposal fall within a SPA/SAC/RAMSAR/SSSI? ,spatial_screening,answers,"if answers[category == ""All Consultations""].text == ""ALL PLANNING APPLICATION."" and value == 1 -> yes","We might not need both checks for text and value, one of them may be enough",,,
+1k ,Does the proposal trigger a SSSI Impact Risk Zone (IRZ)? ,spatial_screening,answers,"if all(answers[i].value == 0 and answers[i].text == ""Not applicable"") -> no ","We might not need both checks for text and value, one of them may be enough",,,
+1l ,Does the proposal in or triggers a National Landscape IRZ (AONB/Heritage Coast/National Park/National Trail/ITE)?  ,spatial_screening,"protected_landscape_impact_risk_zones, urban_rural",out of scope,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,

@@ -58,6 +58,7 @@ class IRZCodeSpatialAgentTests(unittest.TestCase):
 		response,
 		implementation_config_path=None,
 		built_up_coverage=60.0,
+		land_overlap_m2=234000.0,
 	):
 		events = []
 		layer_intersections = {
@@ -68,6 +69,10 @@ class IRZCodeSpatialAgentTests(unittest.TestCase):
 			events.append(layer_name)
 			if layer_name == "os_open_built_up_areas":
 				return {"intersection_percentage": built_up_coverage}
+			if layer_name == "Best_and_most_versatile_land":
+				self.assertEqual(_kwargs.get("where"), "CAT2 IN (1, 2, 3)")
+				return {"intersects": True, "intersection_area_m2": land_overlap_m2}
+			self.assertNotIn("where", _kwargs)
 			return {"intersects": layer_intersections[layer_name]}
 
 		with patch(
@@ -122,6 +127,7 @@ class IRZCodeSpatialAgentTests(unittest.TestCase):
 			result["geospatial_checks"]["best_and_most_versatile_land"],
 			{
 				"intersects": True,
+				"overlap_area_hectares": 23.4,
 				"source_layer": "Best_and_most_versatile_land",
 			},
 		)
@@ -153,6 +159,25 @@ class IRZCodeSpatialAgentTests(unittest.TestCase):
 			"protected_landscape_intersects",
 			context_in_prompt["spatial_screening"],
 		)
+
+	def test_land_overlap_hectares_preserves_zero_area_intersection(self):
+		categories = map_internal_irz_codes(parse_internal_irz_codes(INTERNAL_LINK))
+		for area_m2, hectares in ((234000.0, 23.4), (0.0, 0.0)):
+			with self.subTest(area_m2=area_m2), patch(
+				"backend.src.spatial_screening.implementations.irz_code_agent.parse_irz_category_answers",
+				return_value=[],
+			):
+				result, _, _ = self._run_with_response(
+					model_response(categories), land_overlap_m2=area_m2,
+				)
+				self.assertEqual(
+					result["geospatial_checks"]["best_and_most_versatile_land"],
+					{
+						"intersects": True,
+						"overlap_area_hectares": hectares,
+						"source_layer": "Best_and_most_versatile_land",
+					},
+				)
 
 	def test_medium_threshold_does_not_review_medium_confidence(self):
 		categories = map_internal_irz_codes(parse_internal_irz_codes(INTERNAL_LINK))
