@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 from typing import Any
 
@@ -64,6 +62,7 @@ _REPLACEMENT = "-REDACTED-"
 
 def redact_email_addresses(text: str, replacement: str = _REPLACEMENT) -> str:
     """Redact email addresses in a single text string."""
+
     if not isinstance(text, str) or not text:
         return text
     return _EMAIL_PATTERN.sub(replacement, text)
@@ -74,6 +73,7 @@ def redact_email_addresses_in_data(data: Any, replacement: str = _REPLACEMENT) -
     Recursively redact email addresses in nested structures.
     Supports str, dict, list, tuple, set. Leaves other types unchanged.
     """
+
     if isinstance(data, str):
         return redact_email_addresses(data, replacement)
 

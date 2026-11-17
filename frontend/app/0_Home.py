@@ -3,10 +3,12 @@ from pathlib import Path
 from components.gds_service_toolkit_ui import apply_gds_styles, render_phase_banner, render_caption
 
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Home", layout="wide")
 apply_gds_styles()
 render_phase_banner("Prototype", "This is an AI Triage PoC")
 render_caption("Defra, Natural England internal tooling")
+
+st.title("Dashboard")
 
 app_root = Path(__file__).resolve().parent
 defra_logo = app_root / "assets" / "defra_logo.svg"

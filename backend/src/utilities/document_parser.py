@@ -4,8 +4,13 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
-
 import pypdfium2 as pdfium
+from docx import Document
+from docx.text.paragraph import Paragraph
+from docx.table import Table
+import shutil
+import subprocess
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -29,6 +34,7 @@ def parse_pdf(
     overwritten. PDF and filesystem errors propagate; images written before
     a later failure remain in the output directory.
     """
+
     if type(dpi) is not int or dpi <= 0:
         raise ValueError("dpi must be a positive integer.")
     source_path = Path(pdf_path).resolve()
@@ -56,3 +62,52 @@ def parse_pdf(
             ))
 
     return pages
+
+
+def parse_docx(docx_path: Union[str, Path]) -> str:
+    """Extract (only) text from document paragraphs and tables."""
+
+    document = Document(docx_path)
+
+    def extract_text(container):
+        for block in container.iter_inner_content():
+            if isinstance(block, Paragraph):
+                yield block.text
+            elif isinstance(block, Table):
+                for row in block.rows:
+                    for cell in row.cells:
+                        yield from extract_text(cell)
+
+    return "\n".join(extract_text(document))
+
+
+def convert_docx_to_pdf_libreoffice(docx_path: Path, output_dir: Path) -> Path:
+    """Convert file to PDF using LibreOffice in headless mode."""
+
+    soffice = shutil.which("soffice")
+    if not soffice:
+        raise FileNotFoundError("LibreOffice soffice was not found on PATH.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    profile_dir = output_dir / "libreoffice_profile"
+
+    subprocess.run(
+        [
+            soffice,
+            f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", str(output_dir),
+            str(docx_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    pdf_path = output_dir / f"{docx_path.stem}.pdf"
+    if not pdf_path.is_file():
+        raise FileNotFoundError(f"Conversion did not create {pdf_path}")
+
+    return pdf_path
