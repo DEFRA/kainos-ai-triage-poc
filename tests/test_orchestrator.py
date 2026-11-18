@@ -9,7 +9,10 @@ from unittest.mock import patch
 from httpx import ASGITransport, AsyncClient
 
 from backend.src.ai_triage.api import create_app
-from orchestrator.orchestrator import run_consultation
+from backend.orchestrator.implementations.orchestrator import run_consultation
+
+
+ORCHESTRATOR_MODULE = "backend.orchestrator.implementations.orchestrator"
 
 
 def make_case_intake(
@@ -103,8 +106,8 @@ def make_spatial_result(ring):
             "value": 0,
             "text": "Not applicable",
             "confidence": "High",
-            "reasoning": "No applicable category identified.",
-            "supporting_evidence": [],
+            "reason": "No applicable category identified.",
+            "evidence": [],
         }],
     }
 
@@ -117,7 +120,7 @@ class OrchestratorTests(unittest.TestCase):
 
     def test_missing_required_fields_stop_before_document_screening(self):
         with patch(
-            "orchestrator.orchestrator.run_document_screening"
+            f"{ORCHESTRATOR_MODULE}.run_document_screening"
         ) as document_screening:
             result = run_consultation(
                 {}, "model.yaml", self.output_directory, run_id="run-1"
@@ -140,9 +143,8 @@ class OrchestratorTests(unittest.TestCase):
         )
         case_data = make_case_intake()
         with (
-            patch("orchestrator.orchestrator._DEFAULT_ORCHESTRATOR_CONFIG", config_path),
-            patch("orchestrator.orchestrator.run_case_intake", return_value=case_data),
-            patch("orchestrator.orchestrator.run_document_screening") as document_screening,
+            patch(f"{ORCHESTRATOR_MODULE}._DEFAULT_ORCHESTRATOR_CONFIG", config_path),
+            patch(f"{ORCHESTRATOR_MODULE}.run_document_screening") as document_screening,
         ):
             result = run_consultation(case_data, "model.yaml", self.output_directory)
 
@@ -151,15 +153,14 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("configured_field", result["errors"][0]["message"])
 
     def test_document_error_is_saved_and_stops_before_spatial_screening(self):
-        polygon = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
         case_data = make_case_intake()
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 side_effect=RuntimeError("document service unavailable"),
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value={"answers": []},
             ) as spatial_screening,
         ):
@@ -179,11 +180,11 @@ class OrchestratorTests(unittest.TestCase):
         case_data = make_case_intake()
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value={"metadata": {"polygon": []}},
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening"
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening"
             ) as spatial_screening,
         ):
             result = run_consultation(
@@ -198,11 +199,11 @@ class OrchestratorTests(unittest.TestCase):
         case_data = make_case_intake()
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value=make_document_result(ring),
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value=make_spatial_result(ring),
             ) as spatial_screening,
         ):
@@ -227,11 +228,11 @@ class OrchestratorTests(unittest.TestCase):
         case_data = make_case_intake()
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value={"metadata": {"polygon": [ring, ring]}},
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening"
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening"
             ) as spatial_screening,
         ):
             result = run_consultation(
@@ -241,16 +242,17 @@ class OrchestratorTests(unittest.TestCase):
         spatial_screening.assert_not_called()
         self.assertEqual(len(result["errors"]), 1)
 
-    def test_intake_error_is_saved_and_stops_the_flow(self):
-        with (
-            patch("orchestrator.orchestrator.run_case_intake", side_effect=ValueError("Bad input")),
-            patch("orchestrator.orchestrator.run_document_screening") as documents,
-        ):
-            result = run_consultation({}, "model.yaml", self.output_directory)
+    def test_unstated_intake_reference_is_saved_and_stops_the_flow(self):
+        case_data = make_case_intake()
+        case_data["lpa_reference_id"]["status"] = "unknown"
+        with patch(
+            f"{ORCHESTRATOR_MODULE}.run_document_screening"
+        ) as documents:
+            result = run_consultation(case_data, "model.yaml", self.output_directory)
 
         documents.assert_not_called()
         self.assertEqual(result["errors"][0]["stage"], "case_intake")
-        self.assertIn("Bad input", result["errors"][0]["message"])
+        self.assertIn("lpa_reference_id", result["errors"][0]["message"])
         self.assertEqual(json.loads((self.output_directory / "run.json").read_text()), result)
         self.assertEqual(len(result["run_id"]), 32)
 
@@ -269,15 +271,14 @@ class OrchestratorTests(unittest.TestCase):
         for intake, documents, spatial, expected_error in scenarios:
             with self.subTest(expected_error=expected_error, spatial=spatial):
                 with (
-                    patch("orchestrator.orchestrator.run_case_intake", return_value=intake),
-                    patch("orchestrator.orchestrator.run_document_screening", return_value=documents) as document_call,
-                    patch("orchestrator.orchestrator.run_irz_code_spatial_screening") as spatial_call,
+                    patch(f"{ORCHESTRATOR_MODULE}.run_document_screening", return_value=documents) as document_call,
+                    patch(f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening") as spatial_call,
                 ):
                     if isinstance(spatial, Exception):
                         spatial_call.side_effect = spatial
                     else:
                         spatial_call.return_value = spatial
-                    result = run_consultation({}, "model.yaml", self.output_directory)
+                    result = run_consultation(intake, "model.yaml", self.output_directory)
 
                 self.assertEqual(json.loads((self.output_directory / "run.json").read_text()), result)
                 if expected_error is None:
@@ -297,11 +298,11 @@ class OrchestratorTests(unittest.TestCase):
 
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value=document_result,
             ) as document_screening,
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value=make_spatial_result(ring),
             ) as spatial_screening,
         ):
@@ -344,15 +345,15 @@ class OrchestratorTests(unittest.TestCase):
 
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value=document_result,
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value=spatial_result,
             ),
             patch(
-                "orchestrator.orchestrator.run_decision",
+                f"{ORCHESTRATOR_MODULE}.run_decision",
                 return_value=decision_result,
             ) as decision,
         ):
@@ -389,14 +390,14 @@ class OrchestratorTests(unittest.TestCase):
                     del spatial_result[missing_field]
                 with (
                     patch(
-                        "orchestrator.orchestrator.run_document_screening",
+                        f"{ORCHESTRATOR_MODULE}.run_document_screening",
                         return_value=make_document_result(ring),
                     ),
                     patch(
-                        "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                        f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                         return_value=spatial_result,
                     ),
-                    patch("orchestrator.orchestrator.run_decision") as decision,
+                    patch(f"{ORCHESTRATOR_MODULE}.run_decision") as decision,
                 ):
                     result = run_consultation(
                         case_intake, "model.yaml", self.output_directory
@@ -411,15 +412,15 @@ class OrchestratorTests(unittest.TestCase):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value=make_document_result(ring),
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value=make_spatial_result(ring),
             ) as spatial,
             patch(
-                "orchestrator.orchestrator.run_decision",
+                f"{ORCHESTRATOR_MODULE}.run_decision",
                 side_effect=ValueError("Invalid decision evidence"),
             ),
         ):
@@ -436,11 +437,11 @@ class OrchestratorTests(unittest.TestCase):
         document_result = make_document_result(ring)
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value=document_result,
             ) as document_screening,
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value=make_spatial_result(ring),
             ),
         ):
@@ -455,7 +456,7 @@ class OrchestratorTests(unittest.TestCase):
     def test_malformed_stated_consultation_date_stops_at_case_intake(self):
         case_data = make_case_intake(consultation_date="21/10/2026")
         with patch(
-            "orchestrator.orchestrator.run_document_screening"
+            f"{ORCHESTRATOR_MODULE}.run_document_screening"
         ) as document_screening:
             result = run_consultation(case_data, "model.yaml", self.output_directory)
 
@@ -468,11 +469,11 @@ class OrchestratorTests(unittest.TestCase):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value={"metadata": {"polygon": [ring]}},
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value={"polygon": ring},
             ) as spatial_screening,
         ):
@@ -487,11 +488,11 @@ class OrchestratorTests(unittest.TestCase):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value={"final_output": {"polygon": [ring]}},
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening"
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening"
             ) as spatial_screening,
         ):
             result = run_consultation(case_data, "model.yaml", self.output_directory)
@@ -506,11 +507,11 @@ class OrchestratorTests(unittest.TestCase):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
         with (
             patch(
-                "orchestrator.orchestrator.run_document_screening",
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
                 return_value=make_document_result(ring),
             ),
             patch(
-                "orchestrator.orchestrator.run_irz_code_spatial_screening",
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
                 return_value=make_spatial_result(ring),
             ) as spatial_screening,
         ):

@@ -73,6 +73,64 @@ _DEFAULT_DOCUMENT_SCREENING_CONFIG = (
 )
 
 
+def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
+    if not isinstance(response, str):
+        raise TypeError("The prioritization response must be text.")
+
+    content = response.strip()
+    if content.startswith("```") and content.endswith("```"):
+        lines = content.splitlines()
+        if len(lines) >= 3 and lines[0].strip().casefold() in {"```", "```json"} and lines[-1].strip() == "```":
+            content = "\n".join(lines[1:-1]).strip()
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Prioritization response is not valid JSON (line {error.lineno}, "
+            f"column {error.colno}): {error.msg}."
+        ) from error
+    if not isinstance(result, dict) or set(result) != {"documents"}:
+        raise ValueError("Prioritization response must contain only a 'documents' array.")
+    records = result["documents"]
+    if not isinstance(records, list):
+        raise ValueError("Prioritization response 'documents' must be an array.")
+
+    by_id = {}
+    required_fields = {"id", "priority", "uncertain", "reason"}
+    for record in records:
+        if not isinstance(record, dict) or set(record) != required_fields:
+            raise ValueError("Each prioritization record must contain id, priority, uncertain, and reason.")
+        document_id = record["id"]
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise ValueError("Prioritization document IDs must be non-empty strings.")
+        if document_id in by_id:
+            raise ValueError(f"Prioritization response repeats document ID {document_id!r}.")
+        if record["priority"] not in {"must", "maybe", "skip"}:
+            raise ValueError(f"Invalid priority for document {document_id!r}.")
+        if type(record["uncertain"]) is not bool:
+            raise ValueError(f"uncertain must be a boolean for document {document_id!r}.")
+        if not isinstance(record["reason"], str) or not record["reason"].strip():
+            raise ValueError(f"A non-empty reason is required for document {document_id!r}.")
+        by_id[document_id] = {
+            "id": document_id,
+            "priority": "must" if record["uncertain"] else record["priority"],
+            "uncertain": record["uncertain"],
+            "reason": record["reason"].strip(),
+        }
+
+    if set(by_id) != set(expected_ids):
+        missing = sorted(set(expected_ids) - set(by_id))
+        unexpected = sorted(set(by_id) - set(expected_ids))
+        details = []
+        if missing:
+            details.append("missing IDs: " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected IDs: " + ", ".join(unexpected))
+        raise ValueError("Prioritization response does not match the metadata (" + "; ".join(details) + ").")
+    return [by_id[document_id] for document_id in expected_ids]
+
+
 def _validate_default_polygon_area(value: object) -> float:
     if (
         isinstance(value, bool)
@@ -82,6 +140,59 @@ def _validate_default_polygon_area(value: object) -> float:
     ):
         raise ValueError("default_polygon_area_square_metres must be a positive finite number.")
     return float(value)
+
+
+def load_prioritization_config(config_path: str | Path | None = None) -> dict:
+    config_path = Path(config_path) if config_path is not None else _DEFAULT_DOCUMENT_SCREENING_CONFIG
+    try:
+        with config_path.open(encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file)
+    except yaml.YAMLError as error:
+        raise ValueError(f"Invalid implementation YAML in {config_path}: {error}") from error
+
+    if not isinstance(config, dict) or set(config) != {"document_screening", "lpa"}:
+        raise ValueError(
+            f"Implementation config {config_path} must contain 'document_screening' and 'lpa' mappings."
+        )
+    settings = config["document_screening"]
+    allowed = {
+        "max_concurrent_downloads",
+        "include_maybe",
+        "default_polygon_area_square_metres",
+    }
+    if not isinstance(settings, dict) or settings.keys() - allowed:
+        raise ValueError(
+            f"Implementation settings must be a mapping with only: {', '.join(sorted(allowed))}."
+        )
+
+    max_concurrent_downloads = settings.get("max_concurrent_downloads", 3)
+    if type(max_concurrent_downloads) is not int or max_concurrent_downloads < 1:
+        raise ValueError("max_concurrent_downloads must be a positive integer.")
+
+    include_maybe = settings.get("include_maybe", False)
+    if type(include_maybe) is not bool:
+        raise ValueError("include_maybe must be true or false.")
+
+    default_polygon_area_square_metres = _validate_default_polygon_area(
+        settings.get("default_polygon_area_square_metres", DEFAULT_POLYGON_AREA_SQUARE_METRES)
+    )
+    lpa_settings = config["lpa"]
+    lpa_allowed = {
+        "request_interval_seconds", "retry_increment_seconds", "max_retries",
+        "max_wait_seconds", "refresh_session_on_429", "session_refresh_wait_seconds",
+        "max_session_refreshes",
+    }
+    if not isinstance(lpa_settings, dict) or lpa_settings.keys() - lpa_allowed:
+        raise ValueError(
+            f"LPA settings must be a mapping with only: {', '.join(sorted(lpa_allowed))}."
+        )
+
+    return {
+        "max_concurrent_downloads": max_concurrent_downloads,
+        "include_maybe": include_maybe,
+        "default_polygon_area_square_metres": default_polygon_area_square_metres,
+        "lpa_settings": lpa_settings,
+    }
 
 
 def load_default_polygon_area_square_metres(

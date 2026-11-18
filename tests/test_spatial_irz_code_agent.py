@@ -44,10 +44,8 @@ def model_response(categories, invalid_infrastructure_value=False):
 			"value": 99 if invalid_infrastructure_value and category["name"] == "Infrastructure" else option["value"],
 			"text": option["text"],
 			"confidence": confidence,
-			"reasoning": "Selected from the supplied evidence.",
-			"supporting_evidence": [],
-			"conflicting_evidence": [],
-			"missing_information": [],
+			"reason": "Selected from the supplied evidence.",
+			"evidence": [],
 		})
 	return json.dumps({"answers": answers})
 

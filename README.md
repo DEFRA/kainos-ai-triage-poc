@@ -390,10 +390,10 @@ The returned dictionary retains the original LPA `metadata`, parsed
 `document_findings`, and combined `final_output`, along with source-document IDs,
 one-based page/attachment mappings, raw model response text, provider/model, and
 the prompt path. The run record is saved as
-`<application-key>-document-screening.json`; the merged stage handoff is saved
-separately as `<application-key>-final-output.json`. Existing outputs are not
-overwritten; use a fresh directory for a new run. Failures propagate and leave
-earlier files available for inspection.
+`<application-key>-prioritized-document-screening.json`; the merged stage handoff
+is saved separately as `<application-key>-prioritized-final-output.json`.
+Existing outputs are not overwritten; use a fresh directory for a new run.
+Failures propagate and leave earlier files available for inspection.
 
 `dpi` defaults to 150 for PDF rendering. Optional `context_limit` should match the
 configured model runtime context, not merely its advertised maximum. A warning
@@ -403,9 +403,138 @@ and document attachments and can underestimate actual usage. It is not a full
 multimodal context check. Provider context, image-count, and payload-size errors
 still propagate; no oversized request is silently truncated by the agent.
 
+### S3 document screening
+
+The standalone [S3 implementation](backend/src/document_screening/implementations/s3_document_agent.py)
+performs the same prioritized screening sequence and stores its generated artifacts
+in S3. It does not change the document screening selected by the API orchestrator.
+
+```python
+from backend.src.document_screening.implementations.s3_document_agent import (
+  run_s3_document_screening,
+)
+from backend.src.utilities.s3_utils import create_s3_client
+
+result = run_s3_document_screening(
+  reference="25/03341/CDPN",
+  base_url="https://planningapps.sheffield.gov.uk/online-applications/",
+  model_config_path="environment/model_configs/gemma3-12b.yaml",
+  bucket="my-consultation-bucket",
+  prefix="consultations/example/run-001",
+  s3_client=create_s3_client(region="eu-west-2", profile_name="my-profile"),
+)
+print(result["final_output"])
+print(result["storage"]["objects"])
+```
+
+The S3 client is optional; when omitted, it uses the default AWS credential chain
+and `eu-west-2`. The caller needs permission to write objects to the chosen bucket.
+Choose a unique, non-empty prefix per run: existing objects with the same keys
+are overwritten, and a reused prefix can also retain stale objects from earlier
+runs. S3 bucket versioning, if enabled, is independent of this implementation.
+
+Under the prefix, the implementation stores the metadata JSON, successfully
+downloaded documents, `rendered-pages/` images, the full prioritized run record,
+and the final-output JSON. Relative `saved_as` names in the metadata and sources
+are relative to that prefix. The returned `storage.objects` maps each relative
+artifact path to its bucket, key, S3 URI and version; the persisted run record
+retains the screening result without that storage mapping. Prompt and config paths
+are recorded as local provenance, not uploaded files.
+
+Processing still requires temporary local disk for downloads and rendered pages.
+Files are uploaded after screening, one at a time; each is read into memory for
+upload. If screening fails, already generated files, including an invalid model
+response where available, are uploaded on a best-effort basis before temporary
+cleanup. Upload errors are reported, and partially uploaded objects may remain;
+there is no rollback or automatic retry of the run. Documents and extracted
+evidence may contain sensitive information, so use an appropriately controlled
+bucket and retention policy.
+
+### S3 spatial screening
+
+The standalone [S3 spatial implementation](backend/src/spatial_screening/implementations/s3_spatial_agent.py)
+performs the same IRZ spatial screening sequence as the
+[IRZ code agent](backend/src/spatial_screening/implementations/irz_code_agent.py)
+and stores the complete result in S3. The orchestrator still uses the local IRZ
+code agent.
+
+```python
+from backend.src.spatial_screening.implementations.s3_spatial_agent import (
+  run_s3_spatial_screening,
+)
+from backend.src.utilities.s3_utils import create_s3_client
+
+result = run_s3_spatial_screening(
+  polygon=polygon,
+  context=context,
+  model_config_path="/absolute/path/to/model.yaml",
+  bucket="my-consultation-bucket",
+  prefix="consultations/example/run-001",
+  s3_client=create_s3_client(region="eu-west-2", profile_name="my-profile"),
+)
+print(result["human_review_required"])
+print(result["storage"]["s3_uri"])
+```
+
+The S3 client is optional; when omitted, it uses the default AWS credential chain
+and `eu-west-2`. The result is written to `<prefix>/spatial_screening.json` without
+its `storage` entry, and the returned `storage` gives the bucket, key, version and
+S3 URI. Existing objects at that key are overwritten, so use a unique prefix per run.
+
+Only the result is stored in S3. The local GIS layers and reference files under
+`data/` are still required, as is access to the internal IRZ endpoint. The
+context, polygon and model configuration remain caller inputs. If screening fails,
+nothing is uploaded; if the upload fails, a `RuntimeError` names the destination
+and chains the original cause.
+
+### S3 decision
+
+The standalone [S3 decision implementation](backend/src/decision/implementations/s3_decision_agent.py)
+runs the same deterministic rules as the [decision module](backend/src/decision/implementations/decision_module.py)
+and writes `<prefix>/decision.json` to S3. Its inputs are the stage outputs passed by the caller.
+
+```python
+from backend.src.decision.implementations.s3_decision_agent import run_s3_decision
+
+result = run_s3_decision(
+  stage_outputs,
+  bucket="my-bucket",
+  prefix="consultations/26-00123/decision",
+)
+```
+
+### Orchestrators
+
+Two standalone orchestrators run the consultation flow in sequence and stop on the
+first stage error. Both return a run record with `run_id`, `consultation_id`,
+`stage_outputs` and `errors`. A failure to save the run is added to `errors` and does
+not raise.
+
+- [Local orchestrator](backend/orchestrator/implementations/orchestrator.py): `run_consultation(case_data, model_config_path, output_directory)`
+  accepts the case intake output directly, runs document screening, spatial screening and
+  decision, and saves `run.json` to `output_directory`.
+- [S3 orchestrator](backend/orchestrator/implementations/s3_orchestrator.py): `run_s3_consultation(...)`
+  runs case intake from an email file, then the three later stages, and saves each stage
+  under its own prefix. The run record is saved as `<prefix>/run.json`.
+
+S3 layout for the S3 orchestrator:
+
+```text
+<prefix>/case_intake/
+<prefix>/document_screening/        # artifacts named per application, plus the result JSON
+<prefix>/spatial_screening/spatial_screening.json
+<prefix>/decision/decision.json
+<prefix>/run.json
+```
+
+Shared helpers for each module live in its `tools/` folder. Case intake uses its own
+S3 client, so the `s3_client` passed to `run_s3_consultation` is not used for intake.
+
 ## Tests
 
 Run the focused orchestration tests with
 `uv run python -m unittest discover -s tests -p test_orchestrator.py -v`.
+The S3 variants have their own tests: `test_s3_orchestrator.py`,
+`test_s3_decision_agent.py`, `test_s3_document_agent.py` and `test_s3_spatial_agent.py`.
 Some legacy integration tests may require additional setup; avoid running them
 against live services unintentionally.
