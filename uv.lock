@@ -15,8 +15,8 @@ name = "ai-triage"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "beautifulsoup4" },
     { name = "boto3" },
-    { name = "bs4" },
     { name = "extract-msg" },
     { name = "fastapi" },
     { name = "fiona" },
@@ -33,6 +33,7 @@ dependencies = [
     { name = "requests" },
     { name = "shapely" },
     { name = "streamlit", extra = ["pdf"] },
+    { name = "striprtf" },
     { name = "truststore" },
     { name = "uvicorn" },
 ]
@@ -44,8 +45,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "beautifulsoup4", specifier = ">=4.15.0" },
     { name = "boto3", specifier = ">=1.35.0" },
-    { name = "bs4", specifier = ">=0.0.2" },
     { name = "extract-msg", specifier = ">=0.58.0" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "fiona", specifier = ">=1.9" },
@@ -62,6 +63,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.5" },
     { name = "shapely", specifier = ">=2.0" },
     { name = "streamlit", extras = ["pdf"], specifier = ">=1.66.0" },
+    { name = "striprtf", specifier = ">=0.0.29,<1" },
     { name = "truststore", specifier = ">=0.10.4,<1" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
@@ -182,18 +184,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/45/b4e606b0f66c11c6bd44e91381aa562c6b4dacf478b97b461a429036a89a/botocore-1.43.127.tar.gz", hash = "sha256:93bae360fb3a6f1b8e36593faa8bbbfa05b19866f7a37e9606a98f13394156f8", size = 16559749, upload-time = "2026-11-09T20:52:12.475Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4b/db/bee0401fd3f8cf1e2404044a4e3156dc7e064c2b1fc7162df2d795941cd8/botocore-1.43.127-py3-none-any.whl", hash = "sha256:aa0e3188679a2164a2098a14ea9b59520520cb573aaee9999d852480691e134a", size = 16257630, upload-time = "2026-11-09T20:52:09.488Z" },
-]
-
-[[package]]
-name = "bs4"
-version = "0.0.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "beautifulsoup4" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/aa/4acaf814ff901145da37332e05bb510452ebed97bc9602695059dd46ef39/bs4-0.0.2.tar.gz", hash = "sha256:a48685c58f50fe127722417bae83fe6badf500d54b55f7e39ffe43b798653925", size = 698, upload-time = "2024-01-17T18:15:47.371Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/bb/bf7aab772a159614954d84aa832c129624ba6c32faa559dfb200a534e50b/bs4-0.0.2-py2.py3-none-any.whl", hash = "sha256:abf8742c0805ef7f662dce4b51cca104cffe52b835238afc169142ab9b3fbccc", size = 1189, upload-time = "2024-01-17T18:15:48.613Z" },
 ]
 
 [[package]]
@@ -2446,6 +2436,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/db/eb/2d4c6311874469102ee94e20152b775bae762644f4c628d54916daf5b51e/streamlit_pdf-2.1.0.tar.gz", hash = "sha256:2e2a79140335087517e83b024277750fb910d61fd24052d886c0def4f856fc2d", size = 1950894, upload-time = "2026-09-28T17:48:20.361Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/30/5b/310ff1c5cb48a70a8532b92c523b420a6906d693a2e00e11ef6f3a59dcc8/streamlit_pdf-2.1.0-py3-none-any.whl", hash = "sha256:a5ba2e19571abab0254d5296499fa0fc508f1e66e6a2b3bb13e167037410067e", size = 2083846, upload-time = "2026-09-28T17:48:18.358Z" },
+]
+
+[[package]]
+name = "striprtf"
+version = "0.0.35"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/ec/008fd13d23376e8f7a2f24f56381245218fb2322a17c41c4f944f54eeff9/striprtf-0.0.35.tar.gz", hash = "sha256:a21e8c4f73a791c3f23561df96701488c691ab1749a92487cc9e5fee6ea08455", size = 8017, upload-time = "2026-10-24T15:33:54.876Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/32/896d0597748a55913033a3a52de9a9449d0d479a1ac733a1e0178a537170/striprtf-0.0.35-py3-none-any.whl", hash = "sha256:2c8e207f47c9de355374d604167b17c99a06eb4d238e07cfba772f8669db60e4", size = 8448, upload-time = "2026-10-24T15:33:53.947Z" },
 ]
 
 [[package]]

@@ -1,8 +1,14 @@
+# Note: ensure the cloud-deployed container has writable temporary storage 
+    # and enough memory and disk for anything that needs it
 FROM python:3.12-slim
 
-# Ensure the cloud-deployed container has writable temporary storage and enough memory and disk for the documents and rendered pages
+# Install LibreOffice to convert DOCX, DOC and RTF attachments to PDF
+    # Conversion can fail for damaged or password-protected files and may require significant memory and temporary storage
+    # Missing fonts can change the layout of converted documents
+# Install antiword for text extraction when DOC-to-PDF conversion fails
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+      antiword \
         libreoffice-writer \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
@@ -17,10 +23,11 @@ RUN uv sync --locked --no-dev --no-install-project \
   --trusted-host pypi.python.org \
   --trusted-host files.pythonhosted.org
 
-COPY data/ ./data/
-COPY environment/ ./environment/
+# Not needed for the PoC, so these lines are commented out
+# COPY data/ ./data/ 
+# COPY environment/ ./environment/
+# COPY backend/ ./backend/
 COPY frontend/ ./frontend/
-COPY backend/ ./backend/
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app

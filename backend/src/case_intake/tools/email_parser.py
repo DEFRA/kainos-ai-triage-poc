@@ -306,6 +306,11 @@ def eml_attachment_bytes(part: Any) -> bytes:
 def iter_eml_attachment_parts(msg: Any):
     """Yield attachment parts without traversing into attached emails."""
 
+    # Find the parts used as the email body
+    # A content ID on a body does not make it an attachment
+    plain_body = msg.get_body(preferencelist=("plain",))
+    html_body = msg.get_body(preferencelist=("html",))
+
     # Traverse MIME containers without entering attached emails
     def visit(part: Any, *, is_root: bool = False):
         """Recursively traverse MIME parts to identify attachments."""
@@ -320,6 +325,11 @@ def iter_eml_attachment_parts(msg: Any):
             or mime_type == "message/rfc822"
         ):
             yield part
+            return
+
+        # Skip the selected plain text or HTML body
+        # It belongs to the email body, not the attachment list
+        if part is plain_body or part is html_body:
             return
 
         if maintype == "multipart":
@@ -631,49 +641,47 @@ def prefix_has_objects(s3_client: Any, bucket: str, prefix: str) -> bool:
     return bool(response.get("KeyCount", 0))
 
 
-def resolve_unique_email_prefix(
+def resolve_email_prefix(
     s3_client: Any,
     bucket: str,
     folder_prefix: str,
     consultation_id: str,
     file_folder_name: str,
-) -> str:
-    """Reserve and return an unused email folder prefix using an S3 marker."""
+    overwrite: bool = False,
+) -> Optional[str]:
+    """Reserve an email folder, or skip an existing one unless overwriting."""
 
     base = f"{folder_prefix}/{consultation_id}/{file_folder_name}"
-    version = 1
 
     for _ in range(10_000):
-        candidate = base if version == 1 else f"{base}_v{version}"
-
         # Preserve compatibility with folders created before reservations
-        if prefix_has_objects(s3_client, bucket, candidate):
-            version += 1
-            continue
+        if prefix_has_objects(s3_client, bucket, base):
+            return base if overwrite else None
 
         try:
-            # All concurrent writers must reserve and retain this marker
+            # Prevents two non-overwrite uploads from claiming this folder at once
+            # The marker remains after a failure, so a retry may be skipped
+            # Overwrite-enabled uploads bypass this protection and can conflict
             s3_client.put_object(
                 Bucket=bucket,
-                Key=f"{candidate}/.reservation",
+                Key=f"{base}/.reservation",
                 Body=b"",
                 IfNoneMatch="*",
             )
-            return candidate
+            return base
         except ClientError as exc:
             status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             code = exc.response.get("Error", {}).get("Code")
 
             if status == 412 or code == "PreconditionFailed":
-                version += 1
-                continue
+                return base if overwrite else None
 
             if status == 409 or code == "ConditionalRequestConflict":
                 continue
 
             raise
 
-    raise RuntimeError("Could not reserve a unique email prefix.")
+    raise RuntimeError("Could not reserve the email prefix.")
 
 
 def upload_raw_email_to_s3(
@@ -752,14 +760,49 @@ def upload_attachments_to_s3(
             parse_errors.append(message)
 
 
+def remove_old_attachments(
+    s3_client: Any,
+    bucket: str,
+    prefix: str,
+    attachments: list[dict[str, Any]],
+) -> None:
+    """Remove attachment objects not present in the replacement email."""
+
+    current_keys = {
+        item["key"]
+        for attachment in attachments
+        for item in attachment.get("s3_structured", [])
+        if item.get("bucket") == bucket and item.get("key")
+    }
+    paginator = s3_client.get_paginator("list_objects_v2")
+    old_keys = [
+        {"Key": obj["Key"]}
+        for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/attachments/")
+        for obj in page.get("Contents", [])
+        if obj["Key"] not in current_keys
+    ]
+    for offset in range(0, len(old_keys), 1000):
+        response = s3_client.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": old_keys[offset:offset + 1000], "Quiet": True},
+        )
+        if response.get("Errors"):
+            raise RuntimeError("Old attachment removal failed.")
+
+
 def parse_email(
     email_file_path: str | Path,
     s3_client: Any,
     bucket: str,
     consultation_id: Optional[str] = None,
     folder_prefix: Optional[str] = None,
+    overwrite: bool = False,
+    upload_raw_email: bool = False,
 ) -> dict[str, Any]:
-    """Upload redacted email metadata, the original email, and its attachments."""
+    """
+    Upload redacted email metadata and unredacted attachments.
+    Optionally upload the original/raw/unredacted email (including any attachments therein).
+    """
 
     if not bucket or not bucket.strip():
         raise ValueError("bucket is mandatory.")
@@ -769,10 +812,14 @@ def parse_email(
     path = Path(email_file_path)
 
     # Parse the email and return an error record if parsing fails
+    print("[email parsing] parsing email.", flush=True)
     try:
         payload, raw_bytes, attachment_blobs = parse_email_file(path)
     except Exception:
+        print("[email parsing] parsing failed.", flush=True)
         return {
+            "status": "failed",
+            "warnings": [],
             "s3_key": None,
             "json": {
                 "metadata": {
@@ -807,12 +854,16 @@ def parse_email(
         }
 
     # Stop before uploading if email address redaction fails
+    print("[email parsing] redacting metadata.", flush=True)
     try:
         redacted_payload = redact_emails(copy.deepcopy(payload))
         if not isinstance(redacted_payload, dict):
             raise TypeError("Redaction did not return a dictionary.")
     except Exception:
+        print("[email parsing] redaction failed; no data was uploaded.", flush=True)
         return {
+            "status": "failed",
+            "warnings": [],
             "s3_key": None,
             "json": {
                 "metadata": {
@@ -845,21 +896,36 @@ def parse_email(
     )
 
     # Reserve a unique email folder using an S3 marker object
+    print("[email parsing] reserving S3 folder.", flush=True)
     try:
-        resolved_prefix = resolve_unique_email_prefix(
+        resolved_prefix = resolve_email_prefix(
             s3_client=s3_client,
             bucket=bucket,
             folder_prefix=folder_segment,
             consultation_id=consultation_segment,
             file_folder_name=file_segment,
+            overwrite=overwrite,
         )
     except Exception as error:
+        print("[email parsing] S3 folder reservation failed.", flush=True)
         parse_errors.append(f"S3 folder reservation failed: {error}")
         redacted_payload["metadata"]["parse_status"] = derive_email_parse_status(
             parse_errors,
             redacted_payload["attachments"],
         )
         return {
+            "status": "failed",
+            "warnings": [],
+            "s3_key": None,
+            "json": redacted_payload,
+        }
+
+    if resolved_prefix is None:
+        warning = "Email already exists; processing skipped."
+        print(f"[email parsing] {warning}", flush=True)
+        return {
+            "status": "skipped",
+            "warnings": [warning],
             "s3_key": None,
             "json": redacted_payload,
         }
@@ -869,18 +935,20 @@ def parse_email(
         "prefix": resolved_prefix,
     }
 
-    # Upload the original email and its unredacted attachments
-    try:
-        redacted_payload["storage"]["raw_email"] = upload_raw_email_to_s3(
-            s3_client=s3_client,
-            bucket=bucket,
-            prefix=resolved_prefix,
-            original_filename=redacted_payload["file"]["filename"],
-            raw_bytes=raw_bytes,
-        )
-    except Exception:
-        parse_errors.append("Raw email upload failed.")
+    if upload_raw_email:
+        print("[email parsing] uploading original/raw/unredacted email (including any attachments therein).", flush=True)
+        try:
+            redacted_payload["storage"]["raw_email"] = upload_raw_email_to_s3(
+                s3_client=s3_client,
+                bucket=bucket,
+                prefix=resolved_prefix,
+                original_filename=redacted_payload["file"]["filename"],
+                raw_bytes=raw_bytes,
+            )
+        except Exception:
+            parse_errors.append("Raw email upload failed.")
 
+    print("[email parsing] uploading attachments.", flush=True)
     upload_attachments_to_s3(
         s3_client=s3_client,
         bucket=bucket,
@@ -889,6 +957,16 @@ def parse_email(
         attachment_blobs=attachment_blobs,
         parse_errors=parse_errors,
     )
+
+    if overwrite and derive_email_parse_status(
+        parse_errors, redacted_payload["attachments"]
+    ) == "ok":
+        try:
+            remove_old_attachments(
+                s3_client, bucket, resolved_prefix, redacted_payload["attachments"]
+            )
+        except Exception:
+            parse_errors.append("Old attachment removal failed.")
 
     # Record the final status and metadata key before uploading the JSON
     redacted_payload["metadata"]["parse_status"] = derive_email_parse_status(
@@ -905,6 +983,7 @@ def parse_email(
     }
 
     # Upload the redacted metadata and report any upload failure
+    print("[email parsing] uploading redacted metadata.", flush=True)
     try:
         upload_json_to_s3(
             s3_client=s3_client,
@@ -921,7 +1000,14 @@ def parse_email(
             redacted_payload["attachments"],
         )
 
+    print(
+        f"[email parsing] finished with status {redacted_payload['metadata']['parse_status']}.",
+        flush=True,
+    )
+    json_key = redacted_payload.get("storage", {}).get("json", {}).get("key")
     return {
-        "s3_key": redacted_payload.get("storage", {}).get("json", {}).get("key"),
+        "status": "completed" if redacted_payload["metadata"]["parse_status"] == "ok" and json_key else "failed",
+        "warnings": [],
+        "s3_key": json_key,
         "json": redacted_payload,
     }
