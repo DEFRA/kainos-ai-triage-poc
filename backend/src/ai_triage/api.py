@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException
 
-from orchestrator.orchestrator import run_consultation
+from backend.orchestrator.implementations.orchestrator import run_consultation
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]

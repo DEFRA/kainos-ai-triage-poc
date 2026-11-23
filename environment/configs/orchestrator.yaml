@@ -1,3 +1,8 @@
+model_configs:
+  case_intake: null
+  document_screening: null
+  spatial_screening: null
+
 required_fields:
   case_intake:
     - lpa_reference_id                    # For document screening

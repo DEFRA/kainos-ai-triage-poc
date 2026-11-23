@@ -41,8 +41,8 @@ class DecisionModuleTests(unittest.TestCase):
                 "answers": [
                     {
                         "category": category, "value": 0, "text": "Not applicable",
-                        "confidence": "High", "reasoning": "Development is not applicable.",
-                        "supporting_evidence": [{"source": "planning statement", "evidence": "Housing"}],
+                        "confidence": "High", "reason": "Development is not applicable.",
+                        "evidence": [{"source": "planning statement", "quote": "Housing"}],
                     }
                     for category in ("All Consultations", "Residential")
                 ],
@@ -54,7 +54,7 @@ class DecisionModuleTests(unittest.TestCase):
         result = run_decision(self.inputs)
         self.assertEqual(set(result), {"classification", "confidence", "checklist"})
         self.assertEqual(result["classification"], "unnecessary")
-        self.assertIsNone(result["confidence"])
+        self.assertEqual(result["confidence"], "high")
         self.assertEqual([item["guidance_id"] for item in result["checklist"]], [
             "1b", "1c", "1d", "1e", "1f", "1g", "1h", "1i", "1j", "1k",
         ])
@@ -81,7 +81,7 @@ class DecisionModuleTests(unittest.TestCase):
                 )
                 result = run_decision(self.inputs)
                 self.assertEqual(result["checklist"][7]["answer"], expected)
-                self.assertIsNone(result["checklist"][7]["confidence"])
+                self.assertEqual(result["checklist"][7]["confidence"], "high")
 
     def test_irz_values_control_answers_not_text(self):
         for category_index, value, expected_designation in ((0, 1, True), (0, 2, False), (1, 6, False)):
@@ -105,7 +105,7 @@ class DecisionModuleTests(unittest.TestCase):
         self.assertEqual(irz_item["confidence"], "high")
         self.assertEqual(irz_item["evidence"][0], {
             "stage": "spatial_screening",
-            "evidence": {"source": "planning statement", "evidence": "Housing"},
+            "evidence": {"source": "planning statement", "quote": "Housing"},
         })
         document_item = next(
             item for item in result["checklist"] if item["guidance_id"] == "1c"
@@ -141,7 +141,7 @@ class DecisionModuleTests(unittest.TestCase):
             (True, "medium", False, None, "medium"),
             (True, None, True, "medium", "medium"),
             (True, None, False, "high", None),
-            (False, None, False, "high", None),
+            (False, None, False, "high", "high"),
         )
         for guidance_id, first, second in rules:
             for first_yes, first_confidence, second_yes, second_confidence, expected in cases:
@@ -166,7 +166,7 @@ class DecisionModuleTests(unittest.TestCase):
             (1, "High", 0, "Low", "high"),
             (1, "Low", 2, "Medium", "medium"),
             (0, "High", 0, "Low", "low"),
-            (0, "High", 0, None, None),
+            (0, "High", 0, None, "high"),
             (1, "High", 0, None, "high"),
             (1, None, 2, "Medium", "medium"),
             (0, "High", 2, None, None),
@@ -189,7 +189,7 @@ class DecisionModuleTests(unittest.TestCase):
         )
         result = run_decision(self.inputs)
         self.assertEqual(result["classification"], "necessary")
-        self.assertEqual(result["confidence"], "medium")
+        self.assertEqual(result["confidence"], "high")
         self.inputs["case_intake"]["conditions"]["confidence"] = "high"
         self.assertEqual(run_decision(self.inputs)["confidence"], "high")
 
@@ -200,14 +200,15 @@ class DecisionModuleTests(unittest.TestCase):
                 self.inputs["case_intake"]["conditions"]["confidence"] = confidence
                 result = run_decision(self.inputs)
                 self.assertEqual(result["classification"], "unnecessary")
-                self.assertEqual(result["confidence"], confidence)
+                self.assertEqual(result["confidence"], confidence or "high")
 
-    def test_land_confidence_is_not_invented_for_positive_result(self):
+    def test_land_confidence_defaults_to_high_for_calculated_result(self):
         land = self.inputs["spatial_screening"]["best_and_most_versatile_land"]
         land.update(intersects=True, overlap_area_hectares=23.4)
         result = run_decision(self.inputs)
         self.assertEqual(result["classification"], "necessary")
-        self.assertIsNone(result["confidence"])
+        self.assertEqual(result["checklist"][7]["confidence"], "high")
+        self.assertEqual(result["confidence"], "high")
         land["confidence"] = "medium"
         result = run_decision(self.inputs)
         self.assertEqual(result["checklist"][7]["confidence"], "medium")

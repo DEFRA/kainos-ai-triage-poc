@@ -65,6 +65,31 @@ xmlns:gml="http://www.opengis.net/gml/3.2">
     </ms:Planning_Application_Polygons>
 </wfs:member>
 </wfs:FeatureCollection>"""
+ARCGIS_LAYER_URL = (
+    "https://planning.test/server/rest/services/PALIVE/LIVEUniformPA_Planning/"
+    "FeatureServer/2"
+)
+ARCGIS_MAP_PAGE = TABS + (
+    '<form id="mapForm" method="post" '
+    'action="/portal/apps/experiencebuilder/experience/?id=APP" target="mapiframe">'
+    '<input type="hidden" name="_csrf" value="test-token">'
+    '<input type="hidden" name="accessType" value="PA">'
+    '<input type="hidden" name="keyVals" value="KEY">'
+    '<input type="hidden" name="formAction" value="UseCase1">'
+    '<input type="hidden" name="filterType" value="Application"></form>'
+    '<iframe id="mapiframe" name="mapiframe"></iframe>'
+)
+ARCGIS_APP_DATA = {
+    "dataSources": {
+        "dataSource_1": {"type": "WEB_MAP", "itemId": "WEBMAP"},
+    },
+}
+ARCGIS_WEB_MAP_DATA = {
+    "operationalLayers": [{
+        "title": "LIVEUniformPA_Planning - Application Polygons",
+        "url": ARCGIS_LAYER_URL,
+    }],
+}
 
 
 def response(content, url=BASE_URL, status=200, headers=None):
@@ -739,7 +764,7 @@ class PublicAccessClientTests(unittest.TestCase):
             "https://planning.test/PAM/LIVE/MapServer",
         )
 
-    def test_get_coordinates_keeps_wfs_and_http_errors_fatal(self):
+    def test_get_coordinates_warns_and_returns_empty_when_wfs_fails(self):
         endpoint = "https://planning.test/PAM/LIVE/MapServer"
         with patch.object(
             self.client.session,
@@ -747,23 +772,105 @@ class PublicAccessClientTests(unittest.TestCase):
             return_value=response(
                 '<ows:ExceptionReport xmlns:ows="http://www.opengis.net/ows/1.1" />'
             ),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "FeatureCollection"):
-                self.client.get_coordinates("KEY", endpoint)
+        ), self.assertWarnsRegex(RuntimeWarning, "Could not retrieve an LPA polygon"):
+            self.assertEqual(self.client.get_coordinates("KEY", endpoint), {"polygon": []})
         with patch.object(
             self.client.session,
             "request",
             return_value=response("WFS unavailable", status=503),
-        ):
-            with self.assertRaises(requests.HTTPError):
-                self.client.get_coordinates("KEY", endpoint)
+        ), self.assertWarnsRegex(RuntimeWarning, "WFS lookup failed"):
+            self.assertEqual(self.client.get_coordinates("KEY", endpoint), {"polygon": []})
+
+    def test_get_coordinates_discovers_and_queries_arcgis_polygon_layer(self):
+        map_url = BASE_URL + "applicationDetails.do?activeTab=map&keyVal=KEY"
+        ring = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
+        feature_data = {
+            "features": [{
+                "attributes": {"KEYVAL": "KEY", "REFVAL": REFERENCE},
+                "geometry": {"rings": [ring]},
+            }],
+        }
+        with patch.object(
+            self.client,
+            "_get_tab",
+            return_value=(BeautifulSoup(ARCGIS_MAP_PAGE, "html.parser"), map_url),
+        ), patch.object(
+            self.client.session,
+            "request",
+            side_effect=[
+				response("", url="https://planning.test/portal/apps/experiencebuilder/experience/?id=APP"),
+                response(json.dumps(ARCGIS_APP_DATA)),
+                response(json.dumps(ARCGIS_WEB_MAP_DATA)),
+                response(json.dumps(feature_data)),
+            ],
+        ) as request:
+            result = self.client.get_coordinates("KEY", reference=REFERENCE)
+
+        self.assertEqual(result, {"polygon": [ring]})
+        self.assertEqual(request.call_args_list[0].args[0], "POST")
+        self.assertEqual(request.call_args_list[0].args[1],
+                         "https://planning.test/portal/apps/experiencebuilder/experience/?id=APP")
+        self.assertEqual(
+            dict(request.call_args_list[0].kwargs["data"]),
+            {
+                "_csrf": "test-token",
+                "accessType": "PA",
+                "keyVals": "KEY",
+                "formAction": "UseCase1",
+                "filterType": "Application",
+            },
+        )
+        experience_url = "https://planning.test/portal/apps/experiencebuilder/experience/?id=APP"
+        for call in request.call_args_list[1:]:
+            self.assertEqual(call.kwargs["headers"], {"Referer": experience_url})
+        self.assertEqual(request.call_args_list[1].args[1],
+                         "https://planning.test/portal/sharing/rest/content/items/APP/data")
+        self.assertEqual(request.call_args_list[2].args[1],
+                         "https://planning.test/portal/sharing/rest/content/items/WEBMAP/data")
+        self.assertEqual(request.call_args_list[3].args[1], ARCGIS_LAYER_URL + "/query")
+        self.assertEqual(
+            request.call_args_list[3].kwargs["params"]["where"],
+            "ISPAVISIBLE = 1 AND KEYVAL = 'KEY'",
+        )
+
+    def test_get_coordinates_warns_and_selects_largest_arcgis_outer_ring(self):
+        map_url = BASE_URL + "applicationDetails.do?activeTab=map&keyVal=KEY"
+        largest_outer = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
+        smaller_outer = [[20, 20], [20, 24], [24, 24], [24, 20], [20, 20]]
+        hole = [[2, 2], [8, 2], [8, 8], [2, 8], [2, 2]]
+        feature_data = {
+            "features": [{
+                "attributes": {"KEYVAL": "KEY", "REFVAL": REFERENCE},
+                "geometry": {"rings": [largest_outer, hole, smaller_outer]},
+            }],
+        }
+        with patch.object(
+            self.client,
+            "_get_tab",
+            return_value=(BeautifulSoup(ARCGIS_MAP_PAGE, "html.parser"), map_url),
+        ), patch.object(
+            self.client.session,
+            "request",
+            side_effect=[
+				response("", url="https://planning.test/portal/apps/experiencebuilder/experience/?id=APP"),
+                response(json.dumps(ARCGIS_APP_DATA)),
+                response(json.dumps(ARCGIS_WEB_MAP_DATA)),
+                response(json.dumps(feature_data)),
+            ],
+        ), self.assertWarnsRegex(RuntimeWarning, "3 BNG rings"):
+            result = self.client.get_coordinates("KEY", reference=REFERENCE)
+
+        self.assertEqual(result, {"polygon": [largest_outer]})
 
     def test_get_coordinates_rejects_invalid_dimensions(self):
         endpoint = "https://planning.test/PAM/LIVE/MapServer"
         invalid_dimension = WFS_POLYGONS.replace('srsDimension="2"', 'srsDimension="3"', 1)
-        with patch.object(self.client.session, "request", return_value=response(invalid_dimension)):
-            with self.assertRaisesRegex(ValueError, "2D"):
-                self.client.get_coordinates("KEY&1", endpoint)
+        with patch.object(
+            self.client.session, "request", return_value=response(invalid_dimension)
+        ), self.assertWarnsRegex(RuntimeWarning, "2D"):
+            self.assertEqual(
+                self.client.get_coordinates("KEY&1", endpoint), {"polygon": []}
+            )
 
     def test_get_coordinates_rejects_endpoint_on_another_host(self):
         with patch.object(self.client.session, "request") as request:

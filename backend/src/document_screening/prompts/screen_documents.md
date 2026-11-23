@@ -24,7 +24,7 @@ Fill every section below. Use the `Field` shape (see Output) unless stated other
 |---|---|---|
 | `eia_screening` | Requests for an Environmental Impact Assessment (EIA) screening opinion will include phrases referring to EIAs. The LPA reference may have a suffix such as `SCR` or `EIASCR`. | `DM/0541/24/SCR`<br>“screening opinion”<br>“Regulation 6 of the Town and Country Planning (Environmental Impact Assessment) Regulations 2017” |
 | `eia_scoping` | Requests for an EIA scoping opinion will include phrases referring to EIA scoping. The LPA reference may have a suffix such as `SCO` or `EIASCO`. | `22/03575/EIASCO`<br>“scoping opinion”<br>“Regulation 15 of the Town and Country Planning (Environmental Impact Assessment) Regulations 2017” |
-| `amendment` | Requests for re-consultation on a changed application will include phrases referring to changed plans. | “amended plans”<br>“revised”<br>“re-consultation”<br>“additional/further information received” |
+| `amendment` | Whether the **current consultation is explicitly a consultation or re-consultation on an amendment/change to an existing planning application**. Classify `yes` only where the documents explicitly identify the current consultation as an amendment, amended application, amended plans/proposals, or a re-consultation because the application has been amended. **Do not classify `yes` solely because a document, plan, assessment or information has been described as revised, updated, additional or further.** These terms are supporting evidence only when the context makes clear that they represent an amendment to the application being consulted on. If the documents only describe revised/additional information and do not establish that the current consultation is an amendment, return `no_signal`. | “Consultation on amended plans”<br>“Amended application”<br>“Re-consultation following amendments”<br>“The above application has been amended”<br>“We are re-consulting you following amendments to the proposed development” |
 | `conditions` | Requests for advice on planning conditions will include phrases referring to conditions. The LPA reference may have the suffix `COND`. | “conditions”<br>“Schedule 5 of the Town and Country Planning Act 1990”<br>`19/01665/COND` |
 | `pre_application` | Requests for advice before an application is submitted will include phrases referring to pre-application or the Discretionary Advice Service (DAS). | “pre-application”<br>“pre-app”<br>“Discretionary Advice Service”<br>“DAS” |
 | `prior_approval` | Requests for advice on sites with prior approval will include phrases relevant to prior approval or permitted development. | “Prior approval”<br>“prior notification”<br>“General Permitted Development Order”<br>“Part 3 Class Q of the Town and Country Planning (General Permitted Development) (England) Order 2015”<br>“Regulations 75, 76 and 77 of the Conservation of Habitats and Species Regulations 2017” |
@@ -49,7 +49,7 @@ These items should be stated in the application form or site location plan.
 |---|---|---|
 | `existing_use` | Current or last use of the site, such as the application form’s “Existing use” field. | — |
 | `greenfield_or_brownfield` | Classification as stated in the source document. | `greenfield`, `brownfield` |
-| `features_affected` | Trees, woodland, hedgerows, watercourses or ponds, semi-natural habitats, greenspace, farmland, and rural buildings or structures. For each, give the feature, the `effect` as stated, and the evidence. | Effects: `loss`, `fragmentation`, `change_of_use`, `retained`, `unclear` |
+| `features_affected` | Trees, woodland, hedgerows, watercourses or ponds, semi-natural habitats, greenspace, farmland, and rural buildings or structures. For each, give the feature, the `effect` as stated, and the evidence. | Effects: `loss`, `fragmentation`, `change_of_use`, `retained`, `not_stated` |
 | `designated_sites_mentioned` | Any named SSSI, SAC, SPA, Ramsar site, National Landscape (AONB), National Park, Heritage Coast, ancient woodland, local nature reserve, or priority habitat, including any stated distance. | — |
 
 ## Scale and type of development
@@ -129,7 +129,7 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
   "site_and_surroundings": {
     "existing_use": Field,
     "greenfield_or_brownfield": Field,
-    "features_affected": [{"feature": string, "effect": "loss"|"fragmentation"|"change_of_use"|"retained"|"unclear", "confidence": "high"|"medium"|"low", "evidence": [Evidence]}],
+    "features_affected": [{"feature": string, "effect": "loss"|"fragmentation"|"change_of_use"|"retained"|"not_stated", "confidence": "high"|"medium"|"low", "evidence": [Evidence]}],
     "designated_sites_mentioned": [{"name": string, "type": string, "distance": string|null, "confidence": "high"|"medium"|"low", "evidence": [Evidence]}]
   },
   "scale_and_type_of_development": {

@@ -1,0 +1,134 @@
+{
+  "lpa_reference_id": {
+    "value": "26/00829/LBC",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Mock value for testing. Reference and website taken from the Cheltenham test details, not from an email.",
+    "evidence": []
+  },
+  "lpa_name": {
+    "value": "Cheltenham Borough Council",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Mock value for testing. Council name matches the Cheltenham test website.",
+    "evidence": []
+  },
+  "lpa_website": {
+    "value": "https://publicaccess.cheltenham.gov.uk/online-applications/",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Mock value for testing. Website taken from the Cheltenham test details.",
+    "evidence": []
+  },
+  "consultation_date": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no consultation email, so no consultation date is stated.",
+    "evidence": []
+  },
+  "response_deadline": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no consultation email, so no response deadline is stated.",
+    "evidence": []
+  },
+  "site_address": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no site address. The document screening step provides the location.",
+    "evidence": []
+  },
+  "coordinates": [
+    {
+      "easting": null,
+      "northing": null,
+      "grid_reference": null,
+      "crs": null,
+      "confidence": "low",
+      "reason": "Mock data has no coordinates. The polygon comes from document screening.",
+      "evidence": []
+    }
+  ],
+  "proposal_description": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no proposal description.",
+    "evidence": []
+  },
+  "proposal_summary": null,
+  "application_type": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no application type stated.",
+    "evidence": []
+  },
+  "statutory_basis": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no statutory basis stated.",
+    "evidence": []
+  },
+  "previous_natural_england_involvement": {
+    "value": null,
+    "status": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no previous Natural England involvement stated.",
+    "evidence": []
+  },
+  "hra_status": {
+    "classification": "not_stated",
+    "confidence": "high",
+    "reason": "Mock data has no HRA information.",
+    "evidence": []
+  },
+  "signals": {
+    "eia_screening": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no EIA screening wording.",
+      "evidence": []
+    },
+    "eia_scoping": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no EIA scoping wording.",
+      "evidence": []
+    },
+    "conditions": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no conditions wording.",
+      "evidence": []
+    },
+    "pre_application": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no pre-application wording.",
+      "evidence": []
+    },
+    "prior_approval": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no prior approval wording.",
+      "evidence": []
+    },
+    "minerals_waste_existing": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no minerals or waste existing-site wording.",
+      "evidence": []
+    },
+    "minerals_waste_new": {
+      "classification": "no_signal",
+      "confidence": "high",
+      "reason": "Mock data contains no minerals or waste proposal wording.",
+      "evidence": []
+    }
+  }
+}
