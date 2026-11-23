@@ -4,6 +4,7 @@ import json
 import re
 import tempfile
 from pathlib import Path
+from os import PathLike
 from botocore.exceptions import ClientError
 from bs4 import BeautifulSoup
 from backend.src.case_intake.tools.lpa_website_post_processing import deterministic_post_processing_lpa_website
@@ -17,7 +18,7 @@ from backend.src.utilities.document_parser import (
 from backend.src.utilities.llm_client import LLMClient
 
 
-def load_idox_mapping(path):
+def load_idox_mapping(path: str | PathLike[str]) -> list[dict[str, str | int]]:
     with Path(path).open(encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         required = {"lpa_name", "assigned_current_lpa_name", "lpa_website"}
@@ -108,7 +109,10 @@ def extract_from_consultation(
         if enabled
     ]
 
-    def attachment_skip_reason(*filenames):
+    def attachment_skip_reason(*filenames: str) -> str | None:
+        # *filenames accepts any number of filename arguments.
+        # E.g., attachment_skip_reason("original.pdf", "stored.pdf")
+        # receives filenames as ("original.pdf", "stored.pdf").
         # If several keywords match, use the first enabled reason in the list
         return next(
             (reason for keyword, reason in skip_keywords

@@ -3,7 +3,7 @@ import re
 from urllib.parse import urlsplit
 
 
-def _normalise_lpa_name(value):
+def _normalise_lpa_name(value: str) -> str:
     # 'lpa_name' column may omit spaces between words
     # 'assigned_current_lpa_name' column does not omit spaces between words
     # Ignore spacing, most punctuation and case when comparing names
@@ -14,7 +14,7 @@ def _normalise_lpa_name(value):
     return "".join(re.findall(r"\w+", value.casefold()))
 
 
-def _website_host(value):
+def _website_host(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     value = value.strip()
@@ -30,13 +30,17 @@ def _website_host(value):
     return host if "." in host else None
 
 
-def _website_path(value):
+def _website_path(value: str) -> str:
     value = value.strip()
     parsed = urlsplit(value if "://" in value else f"https://{value}")
     return parsed.path.rstrip("/")
 
 
-def deterministic_post_processing_lpa_website(case_intake_extractions_json, mapping, mapping_source):
+def deterministic_post_processing_lpa_website(
+    case_intake_extractions_json,
+    mapping,
+    mapping_source: object,
+) -> tuple[bool, list[str]]:
     """Deterministically replace extracted LPA websites using one case intake extractions JSON and spreadsheet rows.
     Deterministic > LLM invocation in terms of reduced overhead.
     Spreadsheet here refers to the Excel/CSV file containing IDOX LPA website mappings.
@@ -44,24 +48,40 @@ def deterministic_post_processing_lpa_website(case_intake_extractions_json, mapp
     Steps:
     1. Read each record's lpa_website and lpa_name (from case intake extractions JSON).
 
-    2. Compares the extracted website with the spreadsheet's lpa_website column.
+    2. Compare the extracted website with the spreadsheet's lpa_website column.
     For reference:
-    https://planning.example.gov.uk/online-applications/?ref=123
-        └──── hostname ───────┘└────── path ───────┘└ query ┘
-    The function starts with the hostname because the extracted URL might be a 
-        general council page while the spreadsheet contains a more specific planning page. 
-    It also checks the path to narrow matches when it can.
+        https://planning.example.gov.uk/online-applications/?ref=123
+                └──── hostname ───────┘└────── path ───────┘└ query ┘
+    The function starts with the hostname because the extracted website URL might
+        be a general council webpage, while the spreadsheet contains a more
+        specific planning webpage.
 
-    3. If any matching rows have a compatible URL path, keep those rows.
-    For example, /applications/details matches /applications/.
+    Sub-steps:
+        a. Extract and normalise the hostname from the extracted website and each
+        spreadsheet website. Ignore case, a leading "www." and trailing dots.
+        If a URL has no scheme, treat it as HTTPS.
 
-    4. Compare the name with the spreadsheet's lpa_name (old LPA name) and
-    assigned_current_lpa_name (current LPA name due to any reorganisations) columns. 
-    Case, spaces and most punctuation are ignored, e.g. 'Adur Worthing' (assigned_current_lpa_name) matches 
-        'AdurWorthing' (lpa_name). 
-    If the name matches spreadsheet rows, keep only those rows.
+        b. Keep spreadsheet rows where the hostnames match exactly, or where one
+        hostname is a subdomain of the other. For example, example.gov.uk
+        matches planning.example.gov.uk. The comparison uses a dot boundary,
+        so example.gov.uk does not match example.gov.uk.attacker.com.
 
-    5. Replace the website only if the remaining rows agree on one URL.
+        c. If the extracted URL has a path, compare it with the paths of the
+        hostname-matched spreadsheet rows. Paths match if they are identical
+        or if one is a parent path of the other. For example, /applications
+        matches /applications/details. Trailing slashes are ignored, as are
+        query strings and fragments.
+
+        d. If one or more paths match, keep only those rows. If no paths match,
+        retain the hostname-matched rows for the name comparison in step 3.
+
+    3. Compare the extracted LPA name with the spreadsheet's lpa_name (old LPA name) and
+    assigned_current_lpa_name (current LPA name due to any reorganisations) columns.
+    Case, spaces and most punctuation are ignored, 
+        e.g. 'Adur Worthing' (assigned_current_lpa_name) matches 'AdurWorthing' (lpa_name).
+    If the extracted LPA name matches spreadsheet rows, keep only those rows.
+
+    4. Replace the website only if the remaining rows agree on one URL.
     Otherwise, retain the original value and report a warning.
 
     The case intake extractions JSON is updated in memory. The caller
