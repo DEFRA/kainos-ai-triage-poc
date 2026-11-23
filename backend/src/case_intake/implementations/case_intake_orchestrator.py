@@ -12,12 +12,13 @@ def execute_case_intake_stage(
     consultation_id: str,
     model_config_path: str | Path,
     prompt_path: str | Path,
-    overwrite: bool = False,
+    overwrite: bool = True,
 ) -> dict:
     if not email_file_path:
         raise ValueError("An email file is required.")
 
     s3_client = create_s3_client()
+    warnings = []
 
     parsed_email = parse_email(
         email_file_path=email_file_path,
@@ -25,7 +26,12 @@ def execute_case_intake_stage(
         bucket=bucket,
         folder_prefix=folder_prefix,
         consultation_id=consultation_id,
+        overwrite=overwrite,
     )
+
+    warnings.extend(parsed_email["warnings"])
+    if parsed_email["status"] == "skipped":
+        return {"status": "skipped", "warnings": warnings}
 
     payload = parsed_email["json"]
     metadata = payload.get("metadata", {})
@@ -46,18 +52,26 @@ def execute_case_intake_stage(
         overwrite=overwrite,
     )
 
+    warnings.extend(extraction["warnings"])
+    if extraction["status"] == "skipped":
+        return {"status": "skipped", "warnings": warnings}
+
     records = extraction["json"]["records"]
 
     if not records:
         raise ValueError("No email extraction records were found.")
 
-    warnings = []
     if len(records) > 1:
         warnings.append(
             f"Found {len(records)} email records; returning the first only. There should only be one in production."
         )
 
     return {
-        "email_extraction": records[0]["extractions"],
-        #"warnings": warnings,
+        "status": "completed",
+        "warnings": warnings,
+        # Should be 1 email per consultation but this handles multiple records
+        # Consultations with more than 1 email should have been manually cleaned from raw folders where possible
+        # This allows the code to handle multiple records, even though only one is expected in production
+        # 'QC' filter works for most but not all
+        "email_extraction": [record["extractions"] for record in records],
     }

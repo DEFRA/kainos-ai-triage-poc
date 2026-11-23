@@ -8,7 +8,8 @@ project_root = Path(__file__).resolve().parents[3]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 from backend.src.case_intake.implementations.case_intake_orchestrator import execute_case_intake_stage
-from backend.src.utilities.document_parser import convert_docx_to_pdf_libreoffice
+from backend.src.utilities.document_parser import convert_document_to_pdf_libreoffice
+from components.auth import require_login
 from components.gds_service_toolkit_ui import apply_gds_styles, render_phase_banner, render_caption
 
 
@@ -16,6 +17,7 @@ st.set_page_config(page_title="Case Intake", layout="wide")
 apply_gds_styles()
 render_phase_banner("Prototype", "This is an AI Triage PoC")
 render_caption("Defra, Natural England internal tooling")
+require_login()
 
 st.title("Case Intake")
 
@@ -41,7 +43,7 @@ with uploads_right:
     prompt = st.file_uploader("Extraction prompt *", type=["md"])
 
 st.subheader("Options")
-overwrite = st.checkbox("Replace existing extraction")
+overwrite = st.checkbox("Replace existing email and extraction")
 run = st.button("Run extraction", type="primary")
 
 st.divider()
@@ -85,7 +87,7 @@ if run:
                     config_path.write_bytes(model_config.getvalue())
                     prompt_path.write_bytes(prompt.getvalue())
 
-                    pdf_path = convert_docx_to_pdf_libreoffice(
+                    pdf_path = convert_document_to_pdf_libreoffice(
                         checklist_path,
                         temp_path / "checklist_pdf",
                     )
@@ -119,4 +121,7 @@ if saved and saved["signature"] == signature:
 
     with right:
         st.subheader("Email extraction")
-        st.json(saved["result"]["email_extraction"])
+        for warning in saved["result"]["warnings"]:
+            st.warning(warning)
+        if saved["result"]["status"] == "completed":
+            st.json(saved["result"]["email_extraction"])

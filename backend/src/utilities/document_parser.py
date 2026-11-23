@@ -1,5 +1,3 @@
-"""Extract PDF page text and render page images without OCR or model calls."""
-
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +8,9 @@ from docx.text.paragraph import Paragraph
 from docx.table import Table
 import shutil
 import subprocess
+import re
 from pathlib import Path
+from striprtf.striprtf import rtf_to_text
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,50 @@ def parse_docx(docx_path: Union[str, Path]) -> str:
     return "\n".join(extract_text(document))
 
 
-def convert_docx_to_pdf_libreoffice(docx_path: Path, output_dir: Path) -> Path:
+def parse_doc(doc_path: Union[str, Path]) -> str:
+    """Extract text from a legacy Word document using antiword.
+
+    This is a text-only fallback when DOC-to-PDF conversion fails. Unlike DOCX,
+    DOC is a binary format whose text may be distributed across document
+    structures, so python-docx cannot extract it. Some Python alternatives
+    rely on external converters; others, such as Aspose.Words, are commercial.
+    Antiword provides a free fallback independent of LibreOffice, but it may
+    reject some documents, including files with very small text streams.
+
+    macOS developers can install it locally with `brew install antiword`;
+    Homebrew marks the formula as deprecated. The Docker image installs it
+    separately. Antiword must be available on PATH.
+    """
+
+    antiword = shutil.which("antiword")
+    if not antiword:
+        raise FileNotFoundError("antiword was not found on PATH.")
+
+    try:
+        return subprocess.run(
+            [antiword, "-m", "UTF-8.txt", str(doc_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        ).stdout
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"antiword failed to read {doc_path}: {error.stderr.strip()}") from error
+
+
+def parse_rtf(rtf_path: Union[str, Path]) -> str:
+    """Extract text from an RTF document using its declared code page."""
+
+    data = Path(rtf_path).read_bytes()
+    if not data.lstrip().startswith(b"{\\rtf"):
+        raise ValueError(f"Not an RTF document: {rtf_path}")
+    codepage = re.search(rb"\\ansicpg(\d+)", data)
+    encoding = f"cp{codepage.group(1).decode('ascii')}" if codepage else "cp1252"
+    return rtf_to_text(data.decode(encoding), encoding=encoding)
+
+
+def convert_document_to_pdf_libreoffice(document_path: Path, output_dir: Path) -> Path:
     """Convert file to PDF using LibreOffice in headless mode."""
 
     soffice = shutil.which("soffice")
@@ -98,7 +141,7 @@ def convert_docx_to_pdf_libreoffice(docx_path: Path, output_dir: Path) -> Path:
             "--headless",
             "--convert-to", "pdf",
             "--outdir", str(output_dir),
-            str(docx_path),
+            str(document_path),
         ],
         check=True,
         capture_output=True,
@@ -106,7 +149,7 @@ def convert_docx_to_pdf_libreoffice(docx_path: Path, output_dir: Path) -> Path:
         timeout=120,
     )
 
-    pdf_path = output_dir / f"{docx_path.stem}.pdf"
+    pdf_path = output_dir / f"{document_path.stem}.pdf"
     if not pdf_path.is_file():
         raise FileNotFoundError(f"Conversion did not create {pdf_path}")
 

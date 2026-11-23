@@ -1,5 +1,6 @@
 import streamlit as st
 from pathlib import Path
+from components.auth import require_login
 from components.gds_service_toolkit_ui import apply_gds_styles, render_phase_banner, render_caption
 
 
@@ -8,14 +9,15 @@ apply_gds_styles()
 render_phase_banner("Prototype", "This is an AI Triage PoC")
 render_caption("Defra, Natural England internal tooling")
 
-st.title("Dashboard")
-
 app_root = Path(__file__).resolve().parent
 defra_logo = app_root / "assets" / "defra_logo.svg"
 ne_logo = app_root / "assets" / "natural_england_logo.svg"
 
-# 1 - Logo top left
+# 1 - Logo at the top left before login
 st.logo(str(defra_logo), size="large")
+require_login()
+
+st.title("Dashboard")
 
 # 2 - Images (logos) in the main content area at the top
 left, right = st.columns([3, 1])

@@ -1,11 +1,11 @@
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
+from unittest.mock import patch
 import pypdfium2 as pdfium
 from PIL import Image, ImageDraw
-
-from backend.src.utilities.document_parser import parse_pdf
+from backend.src.utilities.document_parser import parse_doc, parse_pdf, parse_rtf
 
 
 class DocumentParserTests(unittest.TestCase):
@@ -48,6 +48,8 @@ class DocumentParserTests(unittest.TestCase):
         self.pdf_path.write_bytes(contents)
 
     def test_extracts_text_and_renders_all_pages_in_order(self):
+        # Parse a two-page PDF and render each page at a known resolution.
+        # Check page order, extracted text, image properties and source preservation.
         original = self.pdf_path.read_bytes()
         pages = parse_pdf(str(self.pdf_path), str(self.output_directory), dpi=72)
 
@@ -66,11 +68,15 @@ class DocumentParserTests(unittest.TestCase):
         self.assertEqual(self.pdf_path.read_bytes(), original)
 
     def test_default_dpi_controls_image_dimensions(self):
+        # Render the PDF without specifying a resolution.
+        # Check that the default DPI produces the expected image dimensions.
         pages = parse_pdf(self.pdf_path, self.output_directory)
         with Image.open(pages[0].image_path) as image:
             self.assertEqual(image.size, (300, 300))
 
     def test_image_only_page_is_rendered_without_inventing_text(self):
+        # Parse a PDF containing an image but no text layer.
+        # Check that the page is rendered and its extracted text is empty.
         scanned_path = self.root / "scanned.pdf"
         with Image.new("RGB", (144, 144), "white") as image:
             ImageDraw.Draw(image).rectangle((20, 20, 120, 120), fill="black")
@@ -84,6 +90,8 @@ class DocumentParserTests(unittest.TestCase):
             self.assertLess(image.convert("L").getextrema()[0], 255)
 
     def test_existing_render_is_not_overwritten(self):
+        # Render a PDF twice into the same output directory.
+        # Check that the second attempt fails without modifying the first image.
         pages = parse_pdf(self.pdf_path, self.output_directory, dpi=72)
         original = pages[0].image_path.read_bytes()
         with self.assertRaises(FileExistsError):
@@ -91,6 +99,8 @@ class DocumentParserTests(unittest.TestCase):
         self.assertEqual(pages[0].image_path.read_bytes(), original)
 
     def test_documents_with_different_names_have_distinct_image_paths(self):
+        # Render two identically sized PDFs with different filenames.
+        # Check that their output image paths do not collide.
         first_pages = parse_pdf(self.pdf_path, self.output_directory, dpi=72)
         other_path = self.root / "other.pdf"
         other_path.write_bytes(self.pdf_path.read_bytes())
@@ -102,6 +112,8 @@ class DocumentParserTests(unittest.TestCase):
         )
 
     def test_missing_and_invalid_pdf_errors_propagate(self):
+        # Try parsing a missing PDF and a file with invalid PDF contents.
+        # Check that the respective file and PDF parsing errors propagate.
         with self.assertRaises(FileNotFoundError):
             parse_pdf(self.root / "missing.pdf", self.output_directory)
         invalid_path = self.root / "invalid.pdf"
@@ -110,10 +122,61 @@ class DocumentParserTests(unittest.TestCase):
             parse_pdf(invalid_path, self.output_directory)
 
     def test_invalid_dpi_fails_before_creating_output(self):
+        # Try invalid DPI values, including non-integer and boolean inputs.
+        # Check that validation fails before creating the output directory.
         for dpi in (0, -72, True, 72.5):
             with self.subTest(dpi=dpi), self.assertRaisesRegex(ValueError, "dpi"):
                 parse_pdf(self.pdf_path, self.output_directory, dpi=dpi)
         self.assertFalse(self.output_directory.exists())
+
+
+class DocumentTextParserTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+
+    def test_doc_text_fallback_uses_antiword(self):
+        # Extract text from a DOC file using a mocked antiword executable.
+        # Check the returned text and the arguments passed to the command.
+        with patch("backend.src.utilities.document_parser.shutil.which", return_value="/usr/bin/antiword"), \
+             patch("backend.src.utilities.document_parser.subprocess.run") as run:
+            run.return_value.stdout = "Planning details"
+            self.assertEqual(parse_doc(self.root / "application.doc"), "Planning details")
+            self.assertEqual(run.call_args.args[0], [
+                "/usr/bin/antiword", "-m", "UTF-8.txt", str(self.root / "application.doc")
+            ])
+
+    def test_doc_text_fallback_requires_antiword(self):
+        # Attempt DOC text extraction when antiword is unavailable.
+        # Check that the missing executable is reported.
+        with patch("backend.src.utilities.document_parser.shutil.which", return_value=None):
+            with self.assertRaisesRegex(FileNotFoundError, "antiword"):
+                parse_doc(self.root / "application.doc")
+
+    def test_doc_text_fallback_reports_antiword_error(self):
+        # Simulate antiword failing to extract a DOC file.
+        # Check that its diagnostic is included in the raised error.
+        error = subprocess.CalledProcessError(1, "antiword", stderr="Text stream too small")
+        with patch("backend.src.utilities.document_parser.shutil.which", return_value="/usr/bin/antiword"), \
+             patch("backend.src.utilities.document_parser.subprocess.run", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "Text stream too small"):
+                parse_doc(self.root / "application.doc")
+
+    def test_rtf_text_fallback_decodes_unicode_and_codepage(self):
+        # Extract text containing RTF codepage and Unicode escape sequences.
+        # Check that both characters are decoded correctly.
+        path = self.root / "application.rtf"
+        path.write_bytes(b"{\\rtf1\\ansi\\ansicpg1252 Caf\\'e9 and \\u8364?}")
+        self.assertEqual(parse_rtf(path), "Caf\u00e9 and \u20ac")
+
+    def test_rtf_text_fallback_rejects_non_rtf(self):
+        # Attempt to parse a file without an RTF header.
+        # Check that the invalid document is rejected.
+        path = self.root / "application.rtf"
+        path.write_bytes(b"not an RTF document")
+        with self.assertRaisesRegex(ValueError, "Not an RTF"):
+            parse_rtf(path)
 
 
 if __name__ == "__main__":
