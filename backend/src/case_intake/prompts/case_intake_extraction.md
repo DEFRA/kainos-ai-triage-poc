@@ -116,6 +116,7 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
   "signals": {
     "eia_screening": "Signal",
     "eia_scoping": "Signal",
+    "amendment": "Signal",
     "conditions": "Signal",
     "pre_application": "Signal",
     "prior_approval": "Signal",
