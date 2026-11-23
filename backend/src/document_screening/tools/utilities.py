@@ -48,7 +48,7 @@ _EVIDENCE_KEYS = {"document_id", "page", "quote"}
 _CONFIDENCE_LEVELS = {"high", "medium", "low"}
 _SITE_AREA_PATTERN = re.compile(
     r"^\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*"
-    r"(m²|m2|sqm|sq\s*m|square\s+metres?|ha|hectares?|acres?)\s*$",
+    r"(m²|m2|sqm|sq\.?\s*m(?:etres?)?|square\s+metres?|ha|hectares?|acres?)[.]?\s*$",
     re.IGNORECASE,
 )
 _AREA_TO_SQUARE_METRES = {
@@ -56,6 +56,8 @@ _AREA_TO_SQUARE_METRES = {
     "m2": 1.0,
     "sqm": 1.0,
     "sq m": 1.0,
+    "sq metre": 1.0,
+    "sq metres": 1.0,
     "square metre": 1.0,
     "square metres": 1.0,
     "ha": 10_000.0,
@@ -73,6 +75,64 @@ _DEFAULT_DOCUMENT_SCREENING_CONFIG = (
 )
 
 
+def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
+    if not isinstance(response, str):
+        raise TypeError("The prioritization response must be text.")
+
+    content = response.strip()
+    if content.startswith("```") and content.endswith("```"):
+        lines = content.splitlines()
+        if len(lines) >= 3 and lines[0].strip().casefold() in {"```", "```json"} and lines[-1].strip() == "```":
+            content = "\n".join(lines[1:-1]).strip()
+
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Prioritization response is not valid JSON (line {error.lineno}, "
+            f"column {error.colno}): {error.msg}."
+        ) from error
+    if not isinstance(result, dict) or set(result) != {"documents"}:
+        raise ValueError("Prioritization response must contain only a 'documents' array.")
+    records = result["documents"]
+    if not isinstance(records, list):
+        raise ValueError("Prioritization response 'documents' must be an array.")
+
+    by_id = {}
+    required_fields = {"id", "priority", "uncertain", "reason"}
+    for record in records:
+        if not isinstance(record, dict) or set(record) != required_fields:
+            raise ValueError("Each prioritization record must contain id, priority, uncertain, and reason.")
+        document_id = record["id"]
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise ValueError("Prioritization document IDs must be non-empty strings.")
+        if document_id in by_id:
+            raise ValueError(f"Prioritization response repeats document ID {document_id!r}.")
+        if record["priority"] not in {"must", "maybe", "skip"}:
+            raise ValueError(f"Invalid priority for document {document_id!r}.")
+        if type(record["uncertain"]) is not bool:
+            raise ValueError(f"uncertain must be a boolean for document {document_id!r}.")
+        if not isinstance(record["reason"], str) or not record["reason"].strip():
+            raise ValueError(f"A non-empty reason is required for document {document_id!r}.")
+        by_id[document_id] = {
+            "id": document_id,
+            "priority": "must" if record["uncertain"] else record["priority"],
+            "uncertain": record["uncertain"],
+            "reason": record["reason"].strip(),
+        }
+
+    if set(by_id) != set(expected_ids):
+        missing = sorted(set(expected_ids) - set(by_id))
+        unexpected = sorted(set(by_id) - set(expected_ids))
+        details = []
+        if missing:
+            details.append("missing IDs: " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected IDs: " + ", ".join(unexpected))
+        raise ValueError("Prioritization response does not match the metadata (" + "; ".join(details) + ").")
+    return [by_id[document_id] for document_id in expected_ids]
+
+
 def _validate_default_polygon_area(value: object) -> float:
     if (
         isinstance(value, bool)
@@ -82,6 +142,59 @@ def _validate_default_polygon_area(value: object) -> float:
     ):
         raise ValueError("default_polygon_area_square_metres must be a positive finite number.")
     return float(value)
+
+
+def load_prioritization_config(config_path: str | Path | None = None) -> dict:
+    config_path = Path(config_path) if config_path is not None else _DEFAULT_DOCUMENT_SCREENING_CONFIG
+    try:
+        with config_path.open(encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file)
+    except yaml.YAMLError as error:
+        raise ValueError(f"Invalid implementation YAML in {config_path}: {error}") from error
+
+    if not isinstance(config, dict) or set(config) != {"document_screening", "lpa"}:
+        raise ValueError(
+            f"Implementation config {config_path} must contain 'document_screening' and 'lpa' mappings."
+        )
+    settings = config["document_screening"]
+    allowed = {
+        "max_concurrent_downloads",
+        "include_maybe",
+        "default_polygon_area_square_metres",
+    }
+    if not isinstance(settings, dict) or settings.keys() - allowed:
+        raise ValueError(
+            f"Implementation settings must be a mapping with only: {', '.join(sorted(allowed))}."
+        )
+
+    max_concurrent_downloads = settings.get("max_concurrent_downloads", 3)
+    if type(max_concurrent_downloads) is not int or max_concurrent_downloads < 1:
+        raise ValueError("max_concurrent_downloads must be a positive integer.")
+
+    include_maybe = settings.get("include_maybe", False)
+    if type(include_maybe) is not bool:
+        raise ValueError("include_maybe must be true or false.")
+
+    default_polygon_area_square_metres = _validate_default_polygon_area(
+        settings.get("default_polygon_area_square_metres", DEFAULT_POLYGON_AREA_SQUARE_METRES)
+    )
+    lpa_settings = config["lpa"]
+    lpa_allowed = {
+        "request_interval_seconds", "retry_increment_seconds", "max_retries",
+        "max_wait_seconds", "refresh_session_on_429", "session_refresh_wait_seconds",
+        "max_session_refreshes",
+    }
+    if not isinstance(lpa_settings, dict) or lpa_settings.keys() - lpa_allowed:
+        raise ValueError(
+            f"LPA settings must be a mapping with only: {', '.join(sorted(lpa_allowed))}."
+        )
+
+    return {
+        "max_concurrent_downloads": max_concurrent_downloads,
+        "include_maybe": include_maybe,
+        "default_polygon_area_square_metres": default_polygon_area_square_metres,
+        "lpa_settings": lpa_settings,
+    }
 
 
 def load_default_polygon_area_square_metres(
@@ -141,8 +254,6 @@ def _validate_field(value: object, label: str) -> None:
     if not isinstance(field["reason"], str):
         raise ValueError(f"{label} reason must be a string.")
     _validate_evidence(field["evidence"], f"{label} evidence")
-    if not field["evidence"] and field["status"] != "not_stated":
-        raise ValueError(f"{label} evidence may be empty only when status is not_stated.")
 
 
 def _validate_signal(value: object, label: str) -> None:
@@ -256,7 +367,7 @@ def parse_document_findings(response: str) -> dict[str, object]:
         )
         if not isinstance(feature["feature"], str):
             raise ValueError("features_affected feature must be a string.")
-        if feature["effect"] not in {"loss", "fragmentation", "change_of_use", "retained", "unclear"}:
+        if feature["effect"] not in {"loss", "fragmentation", "change_of_use", "retained", "not_stated"}:
             raise ValueError("features_affected has an invalid effect.")
         if feature["confidence"] not in _CONFIDENCE_LEVELS:
             raise ValueError("features_affected has an invalid confidence.")
@@ -403,7 +514,10 @@ def add_polygon_metadata(
                     "Cannot infer polygon: stated site area must be a single value with a supported unit."
                 )
             area_square_metres = float(area_match.group(1).replace(",", ""))
-            area_square_metres *= _AREA_TO_SQUARE_METRES[area_match.group(2).casefold()]
+            unit = re.sub(
+                r"\s+", " ", area_match.group(2).strip().lower().replace(".", "")
+            )
+            area_square_metres *= _AREA_TO_SQUARE_METRES[unit]
             if not math.isfinite(area_square_metres) or area_square_metres <= 0:
                 raise ValueError("Cannot infer polygon: site area must be positive and finite.")
             area_source = "document_site_area"

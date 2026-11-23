@@ -1,11 +1,14 @@
 import csv
 from bs4 import BeautifulSoup
 import json
+import math
 from pathlib import Path
 import re
+from typing import Union
 from urllib.parse import parse_qs, urlsplit
 
 import requests
+import yaml
 
 from backend.src.utilities.http import create_system_trust_session
 
@@ -15,6 +18,83 @@ _IRZ_CODE_TABLE_PATH = (
 _STRATEGIC_SOLUTION_PATH = (
     Path(__file__).resolve().parents[4] / "data" / "ss_paragraphs.jsonl"
 )
+_DEFAULT_IMPLEMENTATION_CONFIG = (
+    Path(__file__).resolve().parents[4] / "environment" / "configs" / "spatial_screening.yaml"
+)
+_BUILT_UP_AREAS_DATA_SOURCE = (
+    Path(__file__).resolve().parents[4]
+    / "data"
+    / "OS_Open_Built_Up_Areas_GeoPackage"
+    / "os_open_built_up_areas.gpkg"
+)
+_BUILT_UP_AREAS_LAYER = "os_open_built_up_areas"
+_BEST_AND_MOST_VERSATILE_LAND_DATA_SOURCE = (
+    Path(__file__).resolve().parents[4] / "data" / "Best_and_most_versatile_land.gdb"
+)
+_BEST_AND_MOST_VERSATILE_LAND_LAYER = "Best_and_most_versatile_land"
+_PROTECTED_LANDSCAPE_DATA_SOURCE = (
+    Path(__file__).resolve().parents[4] / "data" / "Protected_Landscape_Impact_Risk_Zones.gdb"
+)
+_PROTECTED_LANDSCAPE_LAYER = "Protected_Landscape_Impact_Risk_Zones"
+_CONFIDENCE_LEVELS = {"Low": 0, "Medium": 1, "High": 2}
+
+
+def load_spatial_screening_settings(config_path: Union[str, Path]) -> dict[str, object]:
+    """Load validated spatial-screening settings, applying defaults for omitted values."""
+    config_path = Path(config_path)
+    try:
+        with config_path.open(encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file)
+    except yaml.YAMLError as error:
+        raise ValueError(
+            f"Invalid spatial-screening YAML in {config_path}: {error}"
+        ) from error
+
+    if not isinstance(config, dict):
+        raise ValueError(f"Spatial-screening config {config_path} must be a YAML mapping.")
+    settings = config.get("spatial_screening", {})
+    if not isinstance(settings, dict):
+        raise ValueError("'spatial_screening' config section must be a mapping.")
+    allowed_settings = {
+        "human_review_confidence_threshold",
+        "urban_built_up_coverage_threshold_percent",
+    }
+    if settings.keys() - allowed_settings:
+        raise ValueError(
+            "Spatial-screening settings may only contain "
+            + ", ".join(sorted(allowed_settings))
+            + "."
+        )
+    human_review_threshold = settings.get("human_review_confidence_threshold", "High")
+    if not isinstance(human_review_threshold, str) or human_review_threshold not in {
+        "Medium", "High"
+    }:
+        raise ValueError(
+            "human_review_confidence_threshold must be 'Medium' or 'High'."
+        )
+    coverage_threshold = settings.get("urban_built_up_coverage_threshold_percent", 50)
+    if (
+        isinstance(coverage_threshold, bool)
+        or not isinstance(coverage_threshold, (int, float))
+        or not math.isfinite(coverage_threshold)
+        or not 0 < coverage_threshold <= 100
+    ):
+        raise ValueError(
+            "urban_built_up_coverage_threshold_percent must be greater than 0 and at most 100."
+        )
+    return {
+        "human_review_confidence_threshold": human_review_threshold,
+        "urban_built_up_coverage_threshold_percent": float(coverage_threshold),
+    }
+
+
+def apply_human_review_flags(answers: list[dict], threshold: str) -> bool:
+    """Set each answer's review flag and return whether any answer needs review."""
+    for answer in answers:
+        answer["human_review_required"] = (
+            _CONFIDENCE_LEVELS[answer["confidence"]] < _CONFIDENCE_LEVELS[threshold]
+        )
+    return any(answer["human_review_required"] for answer in answers)
 
 
 def parse_internal_irz_codes(internal_link):
@@ -185,8 +265,8 @@ def parse_irz_category_answers(response, categories):
         "value",
         "text",
         "confidence",
-        "reasoning",
-        "supporting_evidence",
+        "reason",
+        "evidence",
     }
     answers_by_category = {}
     for answer in result["answers"]:
@@ -206,23 +286,24 @@ def parse_irz_category_answers(response, categories):
             raise ValueError(
                 f"The selected text for {category_name!r} does not match its value."
             )
-        if not isinstance(answer["confidence"], str) or answer["confidence"] not in {
-            "High", "Medium", "Low"
-        }:
+        confidence_levels = {"high": "High", "medium": "Medium", "low": "Low"}
+        confidence_key = answer["confidence"].strip().casefold() if isinstance(answer["confidence"], str) else None
+        if confidence_key not in confidence_levels:
             raise ValueError(f"Invalid confidence for {category_name!r}.")
-        if not isinstance(answer["reasoning"], str) or not answer["reasoning"].strip():
-            raise ValueError(f"Reasoning is required for {category_name!r}.")
-        evidence_items = answer["supporting_evidence"]
+        answer["confidence"] = confidence_levels[confidence_key]
+        if not isinstance(answer["reason"], str) or not answer["reason"].strip():
+            raise ValueError(f"Reason is required for {category_name!r}.")
+        evidence_items = answer["evidence"]
         if not isinstance(evidence_items, list) or any(
             not isinstance(item, dict)
-            or set(item) != {"source", "evidence"}
+            or set(item) != {"source", "quote"}
             or not isinstance(item["source"], str)
-            or not isinstance(item["evidence"], str)
+            or not isinstance(item["quote"], str)
             for item in evidence_items
         ):
             raise ValueError(
-                f"supporting_evidence for {category_name!r} must be an array "
-                "of source/evidence objects."
+                f"evidence for {category_name!r} must be an array "
+                "of source/quote objects."
             )
         answers_by_category[category_name] = answer
 

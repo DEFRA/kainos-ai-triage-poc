@@ -21,7 +21,7 @@ Return JSON only with this structure:
       "value": 0|1|2|3|4|5|6,
       "text": "<exact option text>",
       "confidence": "high"|"medium"|"low",
-      "reason": "reason": string,
+      "reason": string,
       "evidence": [
         {"source": string, "quote": string}
       ]

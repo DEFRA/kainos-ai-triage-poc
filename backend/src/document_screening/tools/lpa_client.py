@@ -372,106 +372,295 @@ class PublicAccessClient:
 			for index in range(0, len(values), 2)
 		]
 
+	def _arcgis_application_polygon_layer(self, keyval):
+		map_page, page_url = self._get_tab(keyval, "map")
+		map_form = map_page.select_one("form#mapForm")
+		if map_form is not None:
+			experience_url = self._check_same_host(
+				urljoin(page_url, map_form.get("action") or page_url)
+			)
+			form_values = [
+				(field["name"], field.get("value", ""))
+				for field in map_form.select("input[name]")
+			]
+			form_keyvals = dict(form_values).get("keyVals")
+			if form_keyvals != keyval:
+				raise RuntimeError("The application map form has a different application key.")
+			self._request(
+				"POST",
+				experience_url,
+				data=form_values,
+				headers={"Origin": self._origin, "Referer": page_url},
+			)
+		else:
+			map_frame = map_page.select_one("iframe[src]")
+			if map_frame is None:
+				raise RuntimeError("The application map page has no embedded map form or URL.")
+			experience_url = self._check_same_host(
+				urljoin(page_url, map_frame["src"])
+			)
+		app_item_id = parse_qs(urlsplit(experience_url).query).get("id", [None])[0]
+		if not app_item_id:
+			raise RuntimeError("The embedded map URL has no Experience Builder item ID.")
+
+		portal_url = f"{self._origin}/portal"
+		app_data_url = f"{portal_url}/sharing/rest/content/items/{app_item_id}/data"
+		app_data = self._request(
+			"GET",
+			app_data_url,
+			params={"f": "json"},
+			headers={"Referer": experience_url},
+		).json()
+		if not isinstance(app_data, dict) or not isinstance(app_data.get("dataSources"), dict):
+			raise RuntimeError("The embedded map returned invalid application configuration.")
+		web_map = next(
+			(
+				source for source in app_data["dataSources"].values()
+				if isinstance(source, dict)
+				if source.get("type") == "WEB_MAP" and source.get("itemId")
+			),
+			None,
+		)
+		if web_map is None:
+			raise RuntimeError("The embedded map has no configured web map.")
+
+		portal_url = self._check_same_host(web_map.get("portalUrl") or portal_url)
+		web_map_data_url = (
+			f"{portal_url.rstrip('/')}/sharing/rest/content/items/"
+			f"{web_map['itemId']}/data"
+		)
+		web_map_data = self._request(
+			"GET",
+			web_map_data_url,
+			params={"f": "json"},
+			headers={"Referer": experience_url},
+		).json()
+		if not isinstance(web_map_data, dict) or not isinstance(
+			web_map_data.get("operationalLayers"), list
+		):
+			raise RuntimeError("The embedded map returned invalid web-map configuration.")
+		polygon_layer = next(
+			(
+				layer for layer in web_map_data["operationalLayers"]
+				if isinstance(layer, dict)
+				if "application polygons" in layer.get("title", "").casefold()
+				and layer.get("url")
+			),
+			None,
+		)
+		if polygon_layer is None:
+			raise RuntimeError("The embedded web map has no application polygon layer.")
+
+		layer_url = self._check_same_host(polygon_layer["url"])
+		if not re.search(r"/FeatureServer/\d+/?$", urlsplit(layer_url).path):
+			raise RuntimeError("The application polygon layer is not an ArcGIS feature layer.")
+		return layer_url, experience_url
+
+	def _arcgis_coordinates(self, layer_url, keyval, reference, referer=None):
+		query_url = layer_url.rstrip("/") + "/query"
+		escaped_keyval = keyval.replace("'", "''")
+		headers = {"Referer": referer} if referer is not None else None
+		response = self._request(
+			"GET",
+			query_url,
+			params={
+				"where": f"ISPAVISIBLE = 1 AND KEYVAL = '{escaped_keyval}'",
+				"outFields": "*",
+				"returnGeometry": "true",
+				"outSR": "27700",
+				"f": "json",
+			},
+			headers=headers,
+		)
+		result = response.json()
+		if not isinstance(result, dict):
+			raise RuntimeError("ArcGIS polygon query returned an invalid response.")
+		if result.get("error"):
+			raise RuntimeError(f"ArcGIS polygon query failed: {result['error']}.")
+		features = result.get("features")
+		if not isinstance(features, list):
+			raise RuntimeError("ArcGIS polygon query did not return a feature list.")
+
+		rings = []
+		for feature in features:
+			if not isinstance(feature, dict):
+				continue
+			attributes = feature.get("attributes", {})
+			if not isinstance(attributes, dict):
+				continue
+			if attributes.get("KEYVAL") not in (None, keyval):
+				continue
+			if reference and attributes.get("REFVAL") not in (None, reference):
+				continue
+			geometry = feature.get("geometry", {})
+			if not isinstance(geometry, dict):
+				continue
+			feature_rings = geometry.get("rings", [])
+			if isinstance(feature_rings, list):
+				rings.extend(
+					ring for ring in feature_rings
+					if isinstance(ring, list) and len(ring) >= 4
+					and all(
+						isinstance(point, list) and len(point) >= 2
+						and type(point[0]) in {int, float}
+						and type(point[1]) in {int, float}
+						and math.isfinite(point[0]) and math.isfinite(point[1])
+						for point in ring
+					)
+				)
+		if not rings:
+			return []
+
+		if len(rings) > 1:
+			warnings.warn(
+				f"ArcGIS returned {len(rings)} BNG rings for keyval {keyval!r}; "
+				"using the largest exterior ring.",
+				RuntimeWarning,
+				stacklevel=2,
+			)
+		exterior_rings = [
+			ring for ring in rings if self._signed_ring_area(ring) < 0
+		]
+		candidates = exterior_rings or rings
+		return [max(candidates, key=lambda ring: abs(self._signed_ring_area(ring)))]
+
+	@staticmethod
+	def _signed_ring_area(ring):
+		return sum(
+			ring[index][0] * ring[(index + 1) % len(ring)][1]
+			- ring[(index + 1) % len(ring)][0] * ring[index][1]
+			for index in range(len(ring))
+		) / 2
+
 	def get_coordinates(
 		self,
 		keyval: str,
 		mapserver_url: Optional[str] = None,
 		map_name: str = "pa",
+		reference: Optional[str] = None,
 	) -> dict:
-		"""Return exterior polygon rings, or warn and return an empty polygon list."""
+		"""Return one exterior BNG ring, trying the map's ArcGIS layer and WFS."""
 		if not keyval.strip():
 			raise ValueError("keyval must be a non-empty string.")
+		failures = []
+		arcgis_attempted = False
+		if mapserver_url is None:
+			arcgis_attempted = True
+			try:
+				layer_url, referer = self._arcgis_application_polygon_layer(keyval)
+				rings = self._arcgis_coordinates(
+					layer_url, keyval, reference, referer=referer
+				)
+				if rings:
+					return {"polygon": rings}
+				failures.append("ArcGIS returned no matching polygon feature")
+			except (requests.RequestException, RuntimeError, ValueError, TypeError) as error:
+				failures.append(f"ArcGIS lookup failed: {error}")
+
 		if mapserver_url is None:
 			mapserver_url = urljoin(self._origin, "/PAM/LIVE/MapServer")
 		self._check_same_host(mapserver_url)
+		try:
+			wfs_namespace = "http://www.opengis.net/wfs/2.0"
+			ogc_namespace = "http://www.opengis.net/ogc"
+			gml_namespace = "http://www.opengis.net/gml/3.2"
+			mapserver_namespace = "http://mapserver.gis.umn.edu/mapserver"
 
-		wfs_namespace = "http://www.opengis.net/wfs/2.0"
-		ogc_namespace = "http://www.opengis.net/ogc"
-		gml_namespace = "http://www.opengis.net/gml/3.2"
-		mapserver_namespace = "http://mapserver.gis.umn.edu/mapserver"
+			request = ET.Element(
+				f"{{{wfs_namespace}}}GetFeature",
+				{"service": "WFS", "version": "2.0.0"},
+			)
+			for feature_type in (
+				"Planning_Application_Points",
+				"Planning_Application_Polygons",
+			):
+				query = ET.SubElement(
+					request,
+					f"{{{wfs_namespace}}}Query",
+					{"typeName": feature_type},
+				)
+				filter_element = ET.SubElement(query, f"{{{ogc_namespace}}}Filter")
+				equal = ET.SubElement(
+					filter_element,
+					f"{{{ogc_namespace}}}PropertyIsEqualTo",
+				)
+				ET.SubElement(equal, f"{{{ogc_namespace}}}PropertyName").text = "KEYVAL"
+				ET.SubElement(equal, f"{{{ogc_namespace}}}Literal").text = keyval
 
-		request = ET.Element(
-			f"{{{wfs_namespace}}}GetFeature",
-			{"service": "WFS", "version": "2.0.0"},
-		)
-		for feature_type in (
-			"Planning_Application_Points",
-			"Planning_Application_Polygons",
-		):
-			query = ET.SubElement(
-				request,
-				f"{{{wfs_namespace}}}Query",
-				{"typeName": feature_type},
+			response = self._request(
+				"POST",
+				mapserver_url,
+				params={"map": map_name},
+				data=ET.tostring(request, encoding="utf-8"),
+				headers={
+					"Content-Type": "text/xml",
+					"Accept": "*/*",
+					"Origin": self._origin,
+					"Referer": self.base_url,
+				},
 			)
-			filter_element = ET.SubElement(query, f"{{{ogc_namespace}}}Filter")
-			equal = ET.SubElement(
-				filter_element,
-				f"{{{ogc_namespace}}}PropertyIsEqualTo",
-			)
-			ET.SubElement(equal, f"{{{ogc_namespace}}}PropertyName").text = "KEYVAL"
-			ET.SubElement(equal, f"{{{ogc_namespace}}}Literal").text = keyval
-
-		response = self._request(
-			"POST",
-			mapserver_url,
-			params={"map": map_name},
-			data=ET.tostring(request, encoding="utf-8"),
-			headers={
-				"Content-Type": "text/xml",
-				"Accept": "*/*",
-				"Origin": self._origin,
-				"Referer": self.base_url,
-			},
-		)
-		root = ET.fromstring(response.content)
-		if root.tag.rsplit("}", 1)[-1] != "FeatureCollection":
-			raise RuntimeError("WFS did not return a FeatureCollection.")
-		namespaces = {"ms": mapserver_namespace, "gml": gml_namespace}
-		features = root.findall(".//ms:Planning_Application_Polygons", namespaces)
-		if not features:
-			warnings.warn(
-				f"No polygon feature returned for keyval {keyval!r}.",
-				RuntimeWarning,
-				stacklevel=2,
-			)
-			return {"polygon": []}
-
-		exterior_rings = []
-		missing_geometry = False
-		for feature in features:
-			multi_surface = feature.find(
-				"ms:msGeometry/gml:MultiSurface", namespaces
-			)
-			if multi_surface is not None:
-				polygon_elements = multi_surface.findall(".//gml:Polygon", namespaces)
+			root = ET.fromstring(response.content)
+			if root.tag.rsplit("}", 1)[-1] != "FeatureCollection":
+				raise RuntimeError("WFS did not return a FeatureCollection.")
+			namespaces = {"ms": mapserver_namespace, "gml": gml_namespace}
+			features = root.findall(".//ms:Planning_Application_Polygons", namespaces)
+			if not features:
+				failures.append("No polygon feature returned by WFS")
 			else:
-				polygon_elements = feature.findall(
-					"ms:msGeometry/gml:Polygon", namespaces
+				exterior_rings = []
+				for feature in features:
+					multi_surface = feature.find(
+						"ms:msGeometry/gml:MultiSurface", namespaces
+					)
+					if multi_surface is not None:
+						polygon_elements = multi_surface.findall(".//gml:Polygon", namespaces)
+					else:
+						polygon_elements = feature.findall(
+							"ms:msGeometry/gml:Polygon", namespaces
+						)
+					for polygon in polygon_elements:
+						exterior = polygon.find(
+							"gml:exterior/gml:LinearRing/gml:posList", namespaces
+						)
+						if exterior is not None and (exterior.text or "").strip():
+							exterior_rings.append(
+								self._coordinates_from_pos_list(exterior)
+							)
+				if exterior_rings:
+					if len(exterior_rings) > 1:
+						warnings.warn(
+							f"WFS returned {len(exterior_rings)} BNG rings for keyval "
+							f"{keyval!r}; using the largest exterior ring.",
+							RuntimeWarning,
+							stacklevel=2,
+						)
+					return {"polygon": [max(
+						exterior_rings,
+						key=lambda ring: abs(self._signed_ring_area(ring)),
+					)]}
+				failures.append("No polygon coordinates returned by WFS")
+		except (requests.RequestException, ET.ParseError, RuntimeError, ValueError, TypeError) as error:
+			failures.append(f"WFS lookup failed: {error}")
+
+		if not arcgis_attempted:
+			try:
+				layer_url, referer = self._arcgis_application_polygon_layer(keyval)
+				rings = self._arcgis_coordinates(
+					layer_url, keyval, reference, referer=referer
 				)
-			if not polygon_elements:
-				missing_geometry = True
-				continue
-			for polygon in polygon_elements:
-				exterior = polygon.find(
-					"gml:exterior/gml:LinearRing/gml:posList", namespaces
-				)
-				if exterior is None or not (exterior.text or "").strip():
-					missing_geometry = True
-					continue
-				exterior_rings.append(self._coordinates_from_pos_list(exterior))
-		if not exterior_rings:
-			warnings.warn(
-				f"No polygon coordinates returned for keyval {keyval!r}.",
-				RuntimeWarning,
-				stacklevel=2,
-			)
-		elif missing_geometry:
-			warnings.warn(
-				"Some polygon features did not include usable polygon coordinates.",
-				RuntimeWarning,
-				stacklevel=2,
-			)
-		return {"polygon": exterior_rings}
+				if rings:
+					return {"polygon": rings}
+				failures.append("ArcGIS returned no matching polygon feature")
+			except (requests.RequestException, RuntimeError, ValueError, TypeError) as error:
+				failures.append(f"ArcGIS lookup failed: {error}")
+
+		warnings.warn(
+			f"Could not retrieve an LPA polygon for keyval {keyval!r}; "
+			"document-coordinate inference will be attempted. " + "; ".join(failures),
+			RuntimeWarning,
+			stacklevel=2,
+		)
+		return {"polygon": []}
 
 	def search(self, reference: str) -> str:
 		"""Search with fresh form tokens and return the exact application's key."""
@@ -652,12 +841,12 @@ class PublicAccessClient:
 				if published <= ignore_after:
 					included_documents.append(document)
 			documents = included_documents
-		coordinates = self.get_coordinates(keyval)
 		reference = next(
 			(value for label, value in summary["summary"].items()
 			 if label.rstrip(":").strip().casefold() == "reference"),
 			None,
 		)
+		coordinates = self.get_coordinates(keyval, reference=reference)
 		metadata = {
 			"reference": reference,
 			"id": keyval,
