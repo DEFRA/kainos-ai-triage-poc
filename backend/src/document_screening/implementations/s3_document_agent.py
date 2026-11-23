@@ -201,6 +201,10 @@ def run_s3_document_screening(
 
             try:
                 document_findings = parse_document_findings(response)
+                findings_name = f"{application_key}-prioritized-document-findings.json"
+                with (output_directory / findings_name).open("x", encoding="utf-8") as output:
+                    json.dump(document_findings, output, ensure_ascii=False, indent=2)
+                    output.write("\n")
                 document_findings["limitations"] = list(document_findings["limitations"])
                 document_findings["limitations"].extend(downloaded_warnings)
                 final_output = merge_document_findings(metadata, document_findings)

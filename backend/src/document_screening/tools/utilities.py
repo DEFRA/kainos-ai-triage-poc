@@ -48,7 +48,7 @@ _EVIDENCE_KEYS = {"document_id", "page", "quote"}
 _CONFIDENCE_LEVELS = {"high", "medium", "low"}
 _SITE_AREA_PATTERN = re.compile(
     r"^\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*"
-    r"(m²|m2|sqm|sq\s*m|square\s+metres?|ha|hectares?|acres?)\s*$",
+    r"(m²|m2|sqm|sq\.?\s*m(?:etres?)?|square\s+metres?|ha|hectares?|acres?)[.]?\s*$",
     re.IGNORECASE,
 )
 _AREA_TO_SQUARE_METRES = {
@@ -56,6 +56,8 @@ _AREA_TO_SQUARE_METRES = {
     "m2": 1.0,
     "sqm": 1.0,
     "sq m": 1.0,
+    "sq metre": 1.0,
+    "sq metres": 1.0,
     "square metre": 1.0,
     "square metres": 1.0,
     "ha": 10_000.0,
@@ -252,8 +254,6 @@ def _validate_field(value: object, label: str) -> None:
     if not isinstance(field["reason"], str):
         raise ValueError(f"{label} reason must be a string.")
     _validate_evidence(field["evidence"], f"{label} evidence")
-    if not field["evidence"] and field["status"] != "not_stated":
-        raise ValueError(f"{label} evidence may be empty only when status is not_stated.")
 
 
 def _validate_signal(value: object, label: str) -> None:
@@ -367,7 +367,7 @@ def parse_document_findings(response: str) -> dict[str, object]:
         )
         if not isinstance(feature["feature"], str):
             raise ValueError("features_affected feature must be a string.")
-        if feature["effect"] not in {"loss", "fragmentation", "change_of_use", "retained", "unclear"}:
+        if feature["effect"] not in {"loss", "fragmentation", "change_of_use", "retained", "not_stated"}:
             raise ValueError("features_affected has an invalid effect.")
         if feature["confidence"] not in _CONFIDENCE_LEVELS:
             raise ValueError("features_affected has an invalid confidence.")
@@ -514,7 +514,10 @@ def add_polygon_metadata(
                     "Cannot infer polygon: stated site area must be a single value with a supported unit."
                 )
             area_square_metres = float(area_match.group(1).replace(",", ""))
-            area_square_metres *= _AREA_TO_SQUARE_METRES[area_match.group(2).casefold()]
+            unit = re.sub(
+                r"\s+", " ", area_match.group(2).strip().lower().replace(".", "")
+            )
+            area_square_metres *= _AREA_TO_SQUARE_METRES[unit]
             if not math.isfinite(area_square_metres) or area_square_metres <= 0:
                 raise ValueError("Cannot infer polygon: site area must be positive and finite.")
             area_source = "document_site_area"

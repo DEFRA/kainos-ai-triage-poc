@@ -49,7 +49,7 @@ These items should be stated in the application form or site location plan.
 |---|---|---|
 | `existing_use` | Current or last use of the site, such as the application form’s “Existing use” field. | — |
 | `greenfield_or_brownfield` | Classification as stated in the source document. | `greenfield`, `brownfield` |
-| `features_affected` | Trees, woodland, hedgerows, watercourses or ponds, semi-natural habitats, greenspace, farmland, and rural buildings or structures. For each, give the feature, the `effect` as stated, and the evidence. | Effects: `loss`, `fragmentation`, `change_of_use`, `retained`, `unclear` |
+| `features_affected` | Trees, woodland, hedgerows, watercourses or ponds, semi-natural habitats, greenspace, farmland, and rural buildings or structures. For each, give the feature, the `effect` as stated, and the evidence. | Effects: `loss`, `fragmentation`, `change_of_use`, `retained`, `not_stated` |
 | `designated_sites_mentioned` | Any named SSSI, SAC, SPA, Ramsar site, National Landscape (AONB), National Park, Heritage Coast, ancient woodland, local nature reserve, or priority habitat, including any stated distance. | — |
 
 ## Scale and type of development
@@ -129,7 +129,7 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
   "site_and_surroundings": {
     "existing_use": Field,
     "greenfield_or_brownfield": Field,
-    "features_affected": [{"feature": string, "effect": "loss"|"fragmentation"|"change_of_use"|"retained"|"unclear", "confidence": "high"|"medium"|"low", "evidence": [Evidence]}],
+    "features_affected": [{"feature": string, "effect": "loss"|"fragmentation"|"change_of_use"|"retained"|"not_stated", "confidence": "high"|"medium"|"low", "evidence": [Evidence]}],
     "designated_sites_mentioned": [{"name": string, "type": string, "distance": string|null, "confidence": "high"|"medium"|"low", "evidence": [Evidence]}]
   },
   "scale_and_type_of_development": {

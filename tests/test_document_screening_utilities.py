@@ -34,6 +34,23 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite number or null"):
             parse_document_findings(json.dumps(findings))
 
+    def test_accepts_empty_evidence_on_a_stated_field(self):
+        findings = valid_document_findings()
+        findings["scale_and_type_of_development"]["wind_solar"] = {
+            "value": "None",
+            "status": "stated",
+            "confidence": "high",
+            "reason": "No wind or solar proposals mentioned.",
+            "evidence": [],
+        }
+
+        parsed = parse_document_findings(json.dumps(findings))
+
+        self.assertEqual(
+            parsed["scale_and_type_of_development"]["wind_solar"]["evidence"],
+            [],
+        )
+
     def test_normalizes_numeric_coordinate_strings(self):
         findings = valid_document_findings()
         findings["location"]["coordinates"]["easting"] = "359926"
@@ -75,6 +92,25 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
             "polygon_confidence": "medium",
             "polygon_area_source": "document_site_area",
         })
+
+    def test_inference_normalizes_case_and_punctuation_in_square_metre_units(self):
+        for area_value in (
+            "3391.00 Sq. metres",
+            "3,391.00 SQ. METRES",
+            "3391.00 sq metres.",
+        ):
+            with self.subTest(area_value=area_value):
+                final_output = {**valid_document_findings(), "polygon": []}
+                final_output["location"]["site_area"]["value"] = area_value
+
+                result = add_polygon_metadata(final_output)
+
+                ring = result["polygon"]["polygon"][0]
+                width = ring[1][0] - ring[0][0]
+                self.assertAlmostEqual(width * width, 3391.0)
+                self.assertEqual(
+                    result["polygon"]["polygon_area_source"], "document_site_area"
+                )
 
     def test_inference_requires_usable_location_and_area(self):
         final_output = {**valid_document_findings(), "polygon": []}

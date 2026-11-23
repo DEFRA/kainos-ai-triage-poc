@@ -89,6 +89,9 @@ class S3OrchestratorTests(unittest.TestCase):
         run = self.run_consultation()
 
         self.assertEqual(run["errors"], [])
+        self.assertEqual(self.mocks["intake"].call_args.kwargs["model_config_path"], "model.yaml")
+        self.assertEqual(self.mocks["document"].call_args.args[2], "model.yaml")
+        self.assertEqual(self.mocks["spatial"].call_args.args[2], "model.yaml")
         self.assertEqual(run["stage_outputs"]["decision"], {"outcome": "no_objection"})
         self.assertEqual(
             self.mocks["intake"].call_args.kwargs["folder_prefix"], "run-1/case_intake"
@@ -103,6 +106,34 @@ class S3OrchestratorTests(unittest.TestCase):
         self.assertEqual(self.mocks["document"].call_args.kwargs["ignore_after"].isoformat(),
                          "2025-01-02")
         self.mocks["save"].assert_called_with(self.s3, "bucket", "run-1", run, json_name="run.json")
+
+    def test_stage_model_configs_override_default(self):
+        intake_model = self.config_path.parent / "intake.yaml"
+        self.config_path.write_text(
+            CONFIG + "model_configs:\n"
+            f"  case_intake: {intake_model}\n"
+            "  document_screening: environment/model_configs/document.yaml\n"
+            "  spatial_screening: null\n",
+            encoding="utf-8",
+        )
+
+        run = self.run_consultation()
+
+        self.assertEqual(run["errors"], [])
+        self.assertEqual(self.mocks["intake"].call_args.kwargs["model_config_path"], intake_model)
+        self.assertEqual(
+            self.mocks["document"].call_args.args[2],
+            Path(__file__).resolve().parents[1] / "environment/model_configs/document.yaml",
+        )
+        self.assertEqual(self.mocks["spatial"].call_args.args[2], "model.yaml")
+
+    def test_invalid_stage_model_config_stops_before_intake(self):
+        self.config_path.write_text(CONFIG + "model_configs:\n  case_intake: 123\n", encoding="utf-8")
+
+        run = self.run_consultation()
+
+        self.assertEqual(run["errors"][0]["stage"], "configuration")
+        self.mocks["intake"].assert_not_called()
 
     def test_intake_error_is_recorded_and_stops_flow(self):
         self.mocks["intake"].side_effect = ValueError("Bad email")

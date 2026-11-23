@@ -19,6 +19,7 @@ from ..tools.utilities import (
     extract_consultation_date,
     extract_intake_value,
     extract_polygon,
+    load_model_configs,
     load_required_fields,
 )
 
@@ -68,6 +69,7 @@ def run_consultation(
     output_directory = Path(output_directory)
     try:
         required_fields = load_required_fields(_DEFAULT_ORCHESTRATOR_CONFIG)
+        model_configs = load_model_configs(_DEFAULT_ORCHESTRATOR_CONFIG)
     except Exception as error:
         run["errors"].append({
             "stage": "configuration",
@@ -98,7 +100,7 @@ def run_consultation(
         document_screening_arguments = {
             "reference": reference,
             "base_url": base_url,
-            "model_config_path": model_config_path,
+            "model_config_path": model_configs.get("document_screening", model_config_path),
             "output_directory": output_directory,
         }
         if consultation_date is not None:
@@ -124,7 +126,7 @@ def run_consultation(
         spatial_screening = run_irz_code_spatial_screening(
             polygon=polygon,
             context={"case_data": case_intake, "document_screening": document_evidence},
-            model_config_path=model_config_path,
+            model_config_path=model_configs.get("spatial_screening", model_config_path),
         )
         check_required_fields(spatial_screening, ())
         run["stage_outputs"]["spatial_screening"] = spatial_screening

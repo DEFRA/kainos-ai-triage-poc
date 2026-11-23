@@ -223,6 +223,32 @@ class OrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(result["errors"], [])
 
+    def test_stage_model_configs_override_local_default(self):
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        config_path = Path(self.temporary_directory.name) / "orchestrator.yaml"
+        config_path.write_text(
+            "required_fields:\n"
+            "  case_intake: []\n"
+            "  document_screening: [polygon]\n"
+            "  spatial_screening: []\n"
+            "  decision: []\n"
+            "model_configs:\n"
+            "  document_screening: environment/model_configs/document.yaml\n"
+            "  spatial_screening: environment/model_configs/spatial.yaml\n",
+            encoding="utf-8",
+        )
+        with (
+            patch(f"{ORCHESTRATOR_MODULE}._DEFAULT_ORCHESTRATOR_CONFIG", config_path),
+            patch(f"{ORCHESTRATOR_MODULE}.run_document_screening", return_value=make_document_result(ring)) as document,
+            patch(f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening", return_value=make_spatial_result(ring)) as spatial,
+        ):
+            result = run_consultation(make_case_intake(), "model.yaml", self.output_directory)
+
+        self.assertEqual(result["errors"], [])
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(document.call_args.kwargs["model_config_path"], root / "environment/model_configs/document.yaml")
+        self.assertEqual(spatial.call_args.kwargs["model_config_path"], root / "environment/model_configs/spatial.yaml")
+
     def test_multiple_lpa_polygon_rings_stop_before_spatial_with_one_error(self):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
         case_data = make_case_intake()

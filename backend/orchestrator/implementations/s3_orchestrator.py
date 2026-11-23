@@ -22,6 +22,7 @@ from ..tools.utilities import (
     extract_consultation_date,
     extract_intake_value,
     extract_polygon,
+    load_model_configs,
     load_required_fields,
 )
 
@@ -83,6 +84,7 @@ def run_s3_consultation(
     )
     try:
         required_fields = load_required_fields(config_path)
+        model_configs = load_model_configs(config_path)
     except Exception as error:
         run["errors"].append({
             "stage": "configuration",
@@ -98,7 +100,7 @@ def run_s3_consultation(
             bucket=bucket,
             folder_prefix=f"{prefix}/case_intake",
             consultation_id=consultation_id,
-            model_config_path=model_config_path,
+            model_config_path=model_configs.get("case_intake", model_config_path),
             prompt_path=intake_prompt_path,
         )
         case_intake = intake_result["email_extraction"]
@@ -128,7 +130,7 @@ def run_s3_consultation(
         document_result = run_s3_document_screening(
             reference,
             base_url,
-            model_config_path,
+            model_configs.get("document_screening", model_config_path),
             **document_screening_arguments,
         )
         check_required_fields(document_result, ())
@@ -151,7 +153,7 @@ def run_s3_consultation(
         spatial_screening = run_s3_spatial_screening(
             polygon,
             {"case_data": case_intake, "document_screening": document_evidence},
-            model_config_path,
+            model_configs.get("spatial_screening", model_config_path),
             bucket=bucket,
             prefix=f"{prefix}/spatial_screening",
             s3_client=s3_client,

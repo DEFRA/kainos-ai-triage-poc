@@ -10,6 +10,26 @@ import yaml
 STAGES = ("case_intake", "document_screening", "spatial_screening", "decision")
 
 
+def load_model_configs(config_path: Path) -> dict[str, Path]:
+    with config_path.open(encoding="utf-8") as config_file:
+        config = yaml.safe_load(config_file)
+    model_configs = config.get("model_configs", {})
+    if not isinstance(model_configs, dict):
+        raise ValueError("'model_configs' config section must be a mapping.")
+    supported_stages = {"case_intake", "document_screening", "spatial_screening"}
+    if model_configs.keys() - supported_stages:
+        raise ValueError("'model_configs' contains an unsupported stage.")
+    result = {}
+    for stage, value in model_configs.items():
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Model config for {stage} must be a non-empty path or null.")
+        path = Path(value.strip()).expanduser()
+        result[stage] = path if path.is_absolute() else Path(__file__).resolve().parents[3] / path
+    return result
+
+
 def load_required_fields(config_path: Path) -> dict[str, tuple[str, ...]]:
     try:
         with config_path.open(encoding="utf-8") as config_file:

@@ -16,6 +16,12 @@ The configured required fields are in
 requires Field objects for `lpa_reference_id` and `lpa_website`, plus the seven
 case-intake signals used by the decision stage.
 
+Optional `model_configs` entries in [orchestrator.yaml](environment/configs/orchestrator.yaml)
+select separate model YAML files for `case_intake`, `document_screening`, and
+`spatial_screening`. Use absolute paths or paths relative to the repository root;
+`null` or omitted entries use the orchestrator's existing `model_config_path`.
+The local API receives case intake as input, and the decision stage is deterministic.
+
 1. Install the project with Python 3.12.12 and `uv sync`.
 2. Edit one of the model templates in `environment/model_configs/` with a real
   model ID and endpoint or AWS region. The tracked files ending in

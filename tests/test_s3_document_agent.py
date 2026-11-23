@@ -106,6 +106,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         )
         expected = {
             "11.pdf", "rendered-pages/11-page-0001.png", "KEY-metadata.json",
+            "KEY-prioritized-document-findings.json",
             "KEY-prioritized-final-output.json", "KEY-prioritized-document-screening.json",
         }
         self.assertEqual(set(result["storage"]["objects"]), expected)
@@ -114,6 +115,10 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(
             json.loads(self.objects["case/run/KEY-prioritized-final-output.json"]),
             result["final_output"],
+        )
+        self.assertEqual(
+            json.loads(self.objects["case/run/KEY-prioritized-document-findings.json"]),
+            self.findings,
         )
         stored_result = json.loads(self.objects["case/run/KEY-prioritized-document-screening.json"])
         self.assertEqual(stored_result, {key: value for key, value in result.items() if key != "storage"})
@@ -177,6 +182,17 @@ class S3DocumentAgentTests(unittest.TestCase):
             self.run_agent(s3_client=self.s3)
         self.assertEqual(self.objects["case/run/KEY-prioritized-response.txt"], b"not JSON")
         self.assertIn("case/run/11.pdf", self.objects)
+        self.assertFalse(self.output_directory.exists())
+
+    def test_polygon_inference_failure_uploads_parsed_document_findings(self):
+        self.findings["location"]["site_area"]["value"] = "approximately 1.2 hectares"
+
+        with self.assertRaisesRegex(ValueError, "stated site area"):
+            self.run_agent(s3_client=self.s3)
+
+        findings_key = "case/run/KEY-prioritized-document-findings.json"
+        self.assertEqual(json.loads(self.objects[findings_key]), self.findings)
+        self.assertIn("case/run/KEY-metadata.json", self.objects)
         self.assertFalse(self.output_directory.exists())
 
     def test_upload_failure_reports_key(self):

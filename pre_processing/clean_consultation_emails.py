@@ -28,6 +28,7 @@ LOG_PATH = OUTPUT_ROOT / "preprocessing_log.csv"
 DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".rtf"}
 NON_EMAIL_EXTENSIONS = DOCUMENT_EXTENSIONS | {".zip", ".xlsx", ".xls", ".csv", ".txt", ".png", ".jpg", ".jpeg", ".gif"}
 LOG_FIELDS = ["consultation_id", "status", "source", "kept", "removed", "note"]
+EXCLUDED_NAME_TERMS = ("checklist", "response", "annex")
 QC_PATTERN = re.compile(r"(?<![a-z])qc(?![a-z])", re.IGNORECASE)
 
 
@@ -48,7 +49,9 @@ def is_qc_email(name: str, message: EmailMessage) -> bool:
 
 def is_kept_document(filename: str) -> bool:
     lower_name = filename.lower()
-    return Path(lower_name).suffix in DOCUMENT_EXTENSIONS and "checklist" not in lower_name
+    return Path(lower_name).suffix in DOCUMENT_EXTENSIONS and not any(
+        term in lower_name for term in EXCLUDED_NAME_TERMS
+    )
 
 
 def load_folder_emails(folder: Path) -> list[tuple[str, EmailMessage]]:
