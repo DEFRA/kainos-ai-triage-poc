@@ -87,7 +87,7 @@ def extract_from_consultation(
     skip_checklists: bool = True,
     skip_responses: bool = True,
     skip_annexes: bool = True,
-    idox_mapping_path: str | Path | None = (
+    idox_mapping_path: str | Path | None = ( # Setting to 'None' disables this
         Path(__file__).resolve().parents[4]
         / "data/lpa_websites_detailed_idox_filtered_with_current_lpa_names.csv"
     ),

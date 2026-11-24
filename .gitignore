@@ -20,6 +20,7 @@ data/temp/
 data/runs/
 data/OS_Open_Built_Up_Areas_GeoPackage/
 data/emails/
+data/mock_rds_tables/
 frontend/prototyping
 
 # Local model configuration, except example placeholders
