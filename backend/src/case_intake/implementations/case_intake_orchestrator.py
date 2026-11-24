@@ -67,6 +67,7 @@ def execute_case_intake_stage(
         )
     record = records[0]["extractions"]
 
+    record = records[0]["extractions"]
     return {
         "status": "completed",
         "warnings": warnings,
@@ -74,5 +75,6 @@ def execute_case_intake_stage(
         # Consultations with more than 1 email should have been manually cleaned from raw folders where possible
         # This allows the code to handle multiple records, even though only one is expected in production
         # 'QC' filter works for most but not all
+        # old code: "email_extraction": [record["extractions"] for record in records],
         "email_extraction": record,
     }

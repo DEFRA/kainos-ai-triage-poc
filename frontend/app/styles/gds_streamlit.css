@@ -246,6 +246,7 @@ div[data-baseweb="radio"] > div {
 .stButton > button,
 .stDownloadButton > button,
 .stForm [data-testid="baseButton-secondary"],
+button[kind="primaryFormSubmit"],
 button[kind="secondary"],
 button[kind="tertiary"] {
   border-radius: 0 !important;
@@ -259,14 +260,19 @@ button[kind="tertiary"] {
 }
 
 .stButton > button[kind="primary"],
-button[kind="primary"] {
+button[kind="primary"],
+button[kind="primaryFormSubmit"] {
   border: 2px solid #005a30 !important;
   background: var(--gds-success) !important;
   color: #ffffff !important;
 }
 
 .stButton > button[kind="primary"] p,
-.stButton > button[kind="primary"] span {
+.stButton > button[kind="primary"] span,
+button[kind="primary"] p,
+button[kind="primary"] span,
+button[kind="primaryFormSubmit"] p,
+button[kind="primaryFormSubmit"] span {
   color: #ffffff !important;
 }
 
@@ -278,7 +284,8 @@ button[kind="tertiary"]:hover {
 }
 
 .stButton > button[kind="primary"]:hover,
-button[kind="primary"]:hover {
+button[kind="primary"]:hover,
+button[kind="primaryFormSubmit"]:hover {
   background: #005a30 !important;
 }
 

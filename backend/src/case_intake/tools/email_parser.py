@@ -812,11 +812,11 @@ def parse_email(
     path = Path(email_file_path)
 
     # Parse the email and return an error record if parsing fails
-    print("[email parsing] parsing email.", flush=True)
+    print("[email parsing] Parsing email.", flush=True)
     try:
         payload, raw_bytes, attachment_blobs = parse_email_file(path)
     except Exception:
-        print("[email parsing] parsing failed.", flush=True)
+        print("[email parsing] Parsing failed.", flush=True)
         return {
             "status": "failed",
             "warnings": [],
@@ -854,13 +854,13 @@ def parse_email(
         }
 
     # Stop before uploading if email address redaction fails
-    print("[email parsing] redacting metadata.", flush=True)
+    print("[email parsing] Redacting metadata.", flush=True)
     try:
         redacted_payload = redact_emails(copy.deepcopy(payload))
         if not isinstance(redacted_payload, dict):
             raise TypeError("Redaction did not return a dictionary.")
     except Exception:
-        print("[email parsing] redaction failed; no data was uploaded.", flush=True)
+        print("[email parsing] Redaction failed; no data was uploaded.", flush=True)
         return {
             "status": "failed",
             "warnings": [],
@@ -896,7 +896,7 @@ def parse_email(
     )
 
     # Reserve a unique email folder using an S3 marker object
-    print("[email parsing] reserving S3 folder.", flush=True)
+    print("[email parsing] Reserving S3 folder.", flush=True)
     try:
         resolved_prefix = resolve_email_prefix(
             s3_client=s3_client,
@@ -936,7 +936,7 @@ def parse_email(
     }
 
     if upload_raw_email:
-        print("[email parsing] uploading original/raw/unredacted email (including any attachments therein).", flush=True)
+        print("[email parsing] Uploading original/raw/unredacted email (including any attachments therein).", flush=True)
         try:
             redacted_payload["storage"]["raw_email"] = upload_raw_email_to_s3(
                 s3_client=s3_client,
@@ -948,7 +948,7 @@ def parse_email(
         except Exception:
             parse_errors.append("Raw email upload failed.")
 
-    print("[email parsing] uploading attachments.", flush=True)
+    print("[email parsing] Uploading attachments.", flush=True)
     upload_attachments_to_s3(
         s3_client=s3_client,
         bucket=bucket,
@@ -983,7 +983,7 @@ def parse_email(
     }
 
     # Upload the redacted metadata and report any upload failure
-    print("[email parsing] uploading redacted metadata.", flush=True)
+    print("[email parsing] Uploading redacted metadata.", flush=True)
     try:
         upload_json_to_s3(
             s3_client=s3_client,
@@ -1001,7 +1001,7 @@ def parse_email(
         )
 
     print(
-        f"[email parsing] finished with status {redacted_payload['metadata']['parse_status']}.",
+        f"[email parsing] Finished with status {redacted_payload['metadata']['parse_status']}.",
         flush=True,
     )
     json_key = redacted_payload.get("storage", {}).get("json", {}).get("key")

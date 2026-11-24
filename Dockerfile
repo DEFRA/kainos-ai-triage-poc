@@ -32,6 +32,7 @@ RUN uv sync --locked --no-dev --no-install-project \
 # COPY environment/ ./environment/
 # COPY backend/ ./backend/
 COPY frontend/ ./frontend/
+COPY certs/public_bundle_rds_eu-west-2.pem ./certs/public_bundle_rds_eu-west-2.pem
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app

@@ -5,6 +5,7 @@ import re
 import tempfile
 from pathlib import Path
 from os import PathLike
+from typing import Any
 from botocore.exceptions import ClientError
 from bs4 import BeautifulSoup
 from backend.src.case_intake.tools.lpa_website_post_processing import deterministic_post_processing_lpa_website
@@ -73,7 +74,7 @@ def normalise_lpa_reference_id_underscores_to_forward_slashes(data):
 
 def extract_from_consultation(
     *,
-    s3_client,
+    s3_client: Any,
     bucket: str,
     folder_prefix: str,
     consultation_id: str,
@@ -86,7 +87,7 @@ def extract_from_consultation(
     skip_checklists: bool = True,
     skip_responses: bool = True,
     skip_annexes: bool = True,
-    idox_mapping_path: str | Path | None = (
+    idox_mapping_path: str | Path | None = ( # Setting to 'None' disables this
         Path(__file__).resolve().parents[4]
         / "data/lpa_websites_detailed_idox_filtered_with_current_lpa_names.csv"
     ),
@@ -134,7 +135,7 @@ def extract_from_consultation(
     warnings_for_entire_extraction_job_run = []
 
     # Find all email metadata and attachment objects under the consultation
-    print("[email extraction] finding emails and attachments in S3.", flush=True)
+    print("[email extraction] Finding emails and attachments in S3.", flush=True)
     paginator = s3_client.get_paginator("list_objects_v2")
     keys = sorted(
         obj["Key"]
@@ -170,7 +171,7 @@ def extract_from_consultation(
             zip(metadata_keys, attachment_prefixes), start=1
         ):
             print(
-                f"[email extraction] processing email {email_number} of {len(metadata_keys)}.",
+                f"[email extraction] Processing email {email_number} of {len(metadata_keys)}.",
                 flush=True,
             )
             response = s3_client.get_object(Bucket=bucket, Key=metadata_key)
@@ -282,7 +283,7 @@ def extract_from_consultation(
             image_paths = []
 
             # Keep downloaded files and page images available until the model call completes
-            print("[email extraction] preparing attachments.", flush=True)
+            print("[email extraction] Preparing attachments.", flush=True)
             with tempfile.TemporaryDirectory() as temporary_directory:
                 temporary_path = Path(temporary_directory)
 
@@ -392,7 +393,7 @@ def extract_from_consultation(
                     + json.dumps(model_input, ensure_ascii=False, indent=2)
                 )
 
-                print("[email extraction] calling model.", flush=True)
+                print("[email extraction] Calling model.", flush=True)
                 response_text = client.generate(
                     prompt,
                     system_prompt=system_prompt,
@@ -442,7 +443,7 @@ def extract_from_consultation(
     }
 
     if idox_mapping_path is not None:
-        print("[email extraction] post-processing LPA websites.", flush=True)
+        print("[email extraction] Post-processing LPA websites.", flush=True)
         try:
             mapping_path = Path(idox_mapping_path)
             mapping = load_idox_mapping(mapping_path)
@@ -476,7 +477,7 @@ def extract_from_consultation(
     if not overwrite:
         upload["IfNoneMatch"] = "*"
 
-    print("[email extraction] uploading results to S3.", flush=True)
+    print("[email extraction] Uploading results to S3.", flush=True)
     try:
         s3_client.put_object(**upload)
     except ClientError as error:
@@ -490,5 +491,5 @@ def extract_from_consultation(
             return {"status": "skipped", "warnings": warnings_for_entire_extraction_job_run, "s3_key": None}
         raise
 
-    print("[email extraction] finished.", flush=True)
+    print("[email extraction] Finished.", flush=True)
     return {"status": "completed", "warnings": warnings_for_entire_extraction_job_run, "s3_key": output_key, "json": result}

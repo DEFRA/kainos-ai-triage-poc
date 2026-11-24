@@ -24,10 +24,10 @@ The local API receives case intake as input, and the decision stage is determini
 
 1. Install the project with Python 3.12.12 and `uv sync`.
 2. Edit one of the model templates in `environment/model_configs/` with a real
-  model ID and endpoint or AWS region. The tracked files ending in
-  `-placeholder.yaml` are examples and are not directly runnable.
+   model ID and endpoint or AWS region. The tracked files ending in
+   `-placeholder.yaml` are examples and are not directly runnable.
 3. Set `AI_TRIAGE_MODEL_CONFIG` to the absolute path of that model config, then
-  start the API from the repository root:
+   start the API from the repository root:
 
 ```sh
 export AI_TRIAGE_MODEL_CONFIG="$PWD/environment/model_configs/your-model-config.yaml"
@@ -124,16 +124,16 @@ file attachments and keeps no chat history.
 See the [Ollama template](environment/model_configs/ollama-placeholder.yaml) and
 [Bedrock template](environment/model_configs/bedrock-placeholder.yaml).
 
-| Field | Meaning |
-| --- | --- |
-| `provider` / `api_style` | Supported pairs: `ollama` / `openai`, `bedrock` / `converse`. |
-| `model` | Ollama model name, or Bedrock model/inference profile ID. |
-| `base_url` | Required for Ollama, including `/v1`; optional Bedrock runtime endpoint override. |
-| `api_key_env` | Environment variable holding an Ollama endpoint key; defaults to `OLLAMA_API_KEY`. |
-| `region` | Required AWS region for Bedrock. |
-| `aws_profile` | Optional AWS profile for Bedrock. |
-| `max_output_tokens` | Positive output token limit; defaults to 1500. Thinking may consume this budget. |
-| `thinking_level` | Optional `low`, `medium`, or `high`; see limitations below. |
+| Field                        | Meaning                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `provider` / `api_style` | Supported pairs: `ollama` / `openai`, `bedrock` / `converse`.                |
+| `model`                    | Ollama model name, or Bedrock model/inference profile ID.                            |
+| `base_url`                 | Required for Ollama, including `/v1`; optional Bedrock runtime endpoint override.  |
+| `api_key_env`              | Environment variable holding an Ollama endpoint key; defaults to `OLLAMA_API_KEY`. |
+| `region`                   | Required AWS region for Bedrock.                                                     |
+| `aws_profile`              | Optional AWS profile for Bedrock.                                                    |
+| `max_output_tokens`        | Positive output token limit; defaults to 1500. Thinking may consume this budget.     |
+| `thinking_level`           | Optional `low`, `medium`, or `high`; see limitations below.                    |
 
 Unknown fields, invalid settings, and missing configured secrets raise errors.
 Provider SDK errors propagate with their original details. Empty responses,
@@ -538,9 +538,16 @@ S3 client, so the `s3_client` passed to `run_s3_consultation` is not used for in
 
 ## Tests
 
-Run the focused orchestration tests with
-`uv run python -m unittest discover -s tests -p test_orchestrator.py -v`.
-The S3 variants have their own tests: `test_s3_orchestrator.py`,
-`test_s3_decision_agent.py`, `test_s3_document_agent.py` and `test_s3_spatial_agent.py`.
+Run commands from the repository root.
+
+Backend orchestration tests:
+`uv run python -m unittest discover -s tests/backend -p test_orchestrator.py -v`
+
+Backend S3 tests:
+`uv run python -m unittest discover -s tests/backend -p 'test_s3_*.py' -v`
+
+Frontend tests:
+`uv run python -m unittest discover -s tests/frontend -v`
+
 Some legacy integration tests may require additional setup; avoid running them
 against live services unintentionally.
