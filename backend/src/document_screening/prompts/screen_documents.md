@@ -101,7 +101,7 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
 
 `Evidence` = `{"document_id": string, "page": integer|null, "quote": string}`
 
-`Field` = `{"value": string|null, "status": "stated"|"not_stated"|"conflicting"|"unclear", "confidence": "high"|"medium"|"low"|null, "reason": string, "evidence": [Evidence]}`
+`Field` = `{"value": string|null, "status": "stated"|"not_stated"|"conflicting"|"unclear", "confidence": "high"|"medium"|"low", "reason": string, "evidence": [Evidence]}`
 
 `Signal` = `{"classification": "yes"|"no_signal", "confidence": "high"|"medium"|"low", "reason": string, "evidence": [Evidence]}`
 
