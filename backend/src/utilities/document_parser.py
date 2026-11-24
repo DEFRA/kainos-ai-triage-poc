@@ -10,6 +10,9 @@ import shutil
 import subprocess
 import re
 from pathlib import Path
+from zipfile import BadZipFile
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 from striprtf.striprtf import rtf_to_text
 
 
@@ -79,6 +82,32 @@ def parse_docx(docx_path: Union[str, Path]) -> str:
                         yield from extract_text(cell)
 
     return "\n".join(extract_text(document))
+
+
+def parse_xlsx(xlsx_path: Union[str, Path]) -> list[dict[str, object]]:
+    """Extract non-empty cells as text grouped by worksheet and cell address."""
+    source_path = Path(xlsx_path)
+    try:
+        workbook = load_workbook(source_path, read_only=True, data_only=False)
+    except (OSError, BadZipFile, InvalidFileException, KeyError) as error:
+        raise ValueError(f"Could not read XLSX workbook {source_path}: {error}") from error
+
+    sheets = []
+    has_cells = False
+    with closing(workbook):
+        for worksheet in workbook.worksheets:
+            cells = [
+                {"address": cell.coordinate, "value": str(cell.value)}
+                for row in worksheet.iter_rows()
+                for cell in row
+                if cell.value is not None
+            ]
+            has_cells = has_cells or bool(cells)
+            sheets.append({"name": worksheet.title, "cells": cells})
+
+    if not has_cells:
+        raise ValueError(f"XLSX workbook contains no non-empty cells: {source_path}")
+    return sheets
 
 
 def parse_doc(doc_path: Union[str, Path]) -> str:
