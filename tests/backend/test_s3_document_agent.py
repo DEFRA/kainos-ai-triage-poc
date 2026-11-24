@@ -8,6 +8,8 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from docx import Document
+from openpyxl import Workbook
 
 from backend.src.document_screening.implementations.s3_document_agent import (
     run_s3_document_screening,
@@ -73,8 +75,21 @@ class S3DocumentAgentTests(unittest.TestCase):
         for document in metadata["documents"]:
             if document["id"] in document_ids:
                 document["downloaded"] = True
-                document["saved_as"] = f"{document['id']}.pdf"
-                (directory / document["saved_as"]).write_bytes(f"pdf-{document['id']}".encode())
+                suffix = Path(document["url"]).suffix
+                document["saved_as"] = f"{document['id']}{suffix}"
+                document_path = directory / document["saved_as"]
+                if suffix == ".docx":
+                    docx = Document()
+                    docx.add_paragraph("Site area is 1.25 ha")
+                    docx.save(document_path)
+                elif suffix == ".xlsx":
+                    workbook = Workbook()
+                    workbook.active.title = "Application"
+                    workbook.active["A1"] = "Site area"
+                    workbook.active["B1"] = "1.25 ha"
+                    workbook.save(document_path)
+                else:
+                    document_path.write_bytes(f"pdf-{document['id']}".encode())
         (directory / "KEY-metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
     def parse_pdf(self, document_path, directory, *, dpi):
@@ -128,6 +143,74 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(self.s3.put_object.call_args.kwargs["Key"], "case/run/KEY-prioritized-document-screening.json")
         self.assertNotIn("https://example.test/11.pdf", self.llm.generate.call_args.args[0])
         self.assertFalse(self.output_directory.exists())
+
+    def test_office_documents_are_in_source_json_not_model_attachments(self):
+        self.metadata["documents"][0]["url"] = "https://example.test/11.docx"
+        self.metadata["documents"][1]["url"] = "https://example.test/12.xlsx"
+        self.ranking[1]["priority"] = "must"
+
+        result = self.run_agent(s3_client=self.s3)
+
+        prompt = self.llm.generate.call_args_list[1].args[0]
+        source_data = json.loads(
+            prompt.split("Application metadata and downloaded document evidence:\n", 1)[1]
+            .split("\n\nAttachments follow", 1)[0]
+        )
+        sources = {source["id"]: source for source in source_data["sources"]}
+        self.assertEqual(sources["11"]["text"], "Site area is 1.25 ha")
+        self.assertEqual(sources["11"]["pages"], [])
+        self.assertEqual(sources["12"]["sheets"], [{
+            "name": "Application",
+            "cells": [
+                {"address": "A1", "value": "Site area"},
+                {"address": "B1", "value": "1.25 ha"},
+            ],
+        }])
+        self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
+        self.assertIn("11.docx", result["storage"]["objects"])
+        self.assertIn("12.xlsx", result["storage"]["objects"])
+        self.assertTrue(self.objects["case/run/11.docx"].startswith(b"PK"))
+        self.assertTrue(self.objects["case/run/12.xlsx"].startswith(b"PK"))
+
+    def test_docx_extraction_failure_is_reported_and_original_is_retained(self):
+        self.metadata["documents"][0]["url"] = "https://example.test/11.docx"
+
+        def download_invalid_docx(application_key, metadata, directory, document_ids, *, max_workers):
+            document = metadata["documents"][0]
+            document["downloaded"] = True
+            document["saved_as"] = "11.docx"
+            (directory / "11.docx").write_bytes(b"not a DOCX")
+
+        self.lpa.download_documents_concurrently.side_effect = download_invalid_docx
+        result = self.run_agent(s3_client=self.s3)
+
+        prompt = self.llm.generate.call_args_list[1].args[0]
+        source_data = json.loads(
+            prompt.split("Application metadata and downloaded document evidence:\n", 1)[1]
+            .split("\n\nAttachments follow", 1)[0]
+        )
+        source = source_data["sources"][0]
+        self.assertIn("could not be extracted", source["extraction_error"])
+        self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
+        self.assertTrue(any("could not be extracted" in item for item in result["document_findings"]["limitations"]))
+        persisted_findings = json.loads(self.objects["case/run/KEY-prioritized-document-findings.json"])
+        self.assertTrue(any("could not be extracted" in item for item in persisted_findings["limitations"]))
+        self.assertEqual(self.objects["case/run/11.docx"], b"not a DOCX")
+
+    def test_unsupported_format_is_not_attached_and_is_reported(self):
+        self.metadata["documents"][0]["url"] = "https://example.test/11.doc"
+
+        result = self.run_agent(s3_client=self.s3)
+
+        prompt = self.llm.generate.call_args_list[1].args[0]
+        source_data = json.loads(
+            prompt.split("Application metadata and downloaded document evidence:\n", 1)[1]
+            .split("\n\nAttachments follow", 1)[0]
+        )
+        source = source_data["sources"][0]
+        self.assertIn("unsupported file format .doc", source["extraction_error"])
+        self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
+        self.assertTrue(any("unsupported file format .doc" in item for item in result["document_findings"]["limitations"]))
 
     def test_include_maybe_and_uncertain_skip_are_selected(self):
         config_path = self.root / "config.yaml"

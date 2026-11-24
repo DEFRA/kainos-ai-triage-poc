@@ -7,8 +7,10 @@ from contextlib import closing
 from datetime import date
 from pathlib import Path
 from typing import Any, Optional, Union
+from zipfile import BadZipFile
 
-from backend.src.utilities.document_parser import parse_pdf
+from docx.opc.exceptions import PackageNotFoundError
+from backend.src.utilities.document_parser import parse_docx, parse_pdf, parse_xlsx
 from backend.src.utilities.llm_client import LLMClient
 from backend.src.utilities.s3_utils import create_s3_client, put_object_with_metadata
 from ..tools.lpa_client import PublicAccessClient
@@ -145,12 +147,14 @@ def run_s3_document_screening(
 
             attachments = []
             sources = []
+            preparation_warnings = []
             for document in documents:
                 if not document.get("downloaded"):
                     continue
                 document_path = output_directory / document["saved_as"]
                 source = {"id": document["id"], "saved_as": document["saved_as"], "pages": []}
-                if document_path.suffix.lower() == ".pdf":
+                suffix = document_path.suffix.lower()
+                if suffix == ".pdf":
                     pages = parse_pdf(document_path, output_directory / "rendered-pages", dpi=dpi)
                     if not pages:
                         raise ValueError(f"Document {document['id']} contains no PDF pages.")
@@ -161,9 +165,38 @@ def run_s3_document_screening(
                             "text": page.text,
                             "attachment_number": len(attachments),
                         })
-                else:
+                elif suffix in {".docx", ".xlsx"}:
+                    try:
+                        if suffix == ".docx":
+                            text = parse_docx(document_path)
+                            if not text.strip():
+                                raise ValueError("Document contains no extractable text.")
+                            source["text"] = text
+                        else:
+                            source["sheets"] = parse_xlsx(document_path)
+                    except (OSError, ValueError, BadZipFile, PackageNotFoundError) as error:
+                        detail = str(error).replace(str(document_path), document["saved_as"])
+                        warning = (
+                            f"Document {document['id']} ({document['saved_as']}) could not be extracted: "
+                            f"{type(error).__name__}: {detail}"
+                        )
+                        source["extraction_error"] = warning
+                        preparation_warnings.append(warning)
+                elif suffix in {".jpg", ".jpeg", ".png", ".webp"} or (
+                    provider == "bedrock" and suffix == ".gif"
+                ):
                     attachments.append(document_path)
                     source["attachment_number"] = len(attachments)
+                elif provider == "bedrock" and suffix in {".csv", ".doc", ".xls", ".html", ".txt", ".md"}:
+                    attachments.append(document_path)
+                    source["attachment_number"] = len(attachments)
+                else:
+                    warning = (
+                        f"Document {document['id']} ({document['saved_as']}) has unsupported file format "
+                        f"{suffix or '(no extension)'} and was not sent to the model."
+                    )
+                    source["extraction_error"] = warning
+                    preparation_warnings.append(warning)
                 sources.append(source)
 
             downloaded_warnings = [
@@ -180,9 +213,14 @@ def run_s3_document_screening(
             }
             prompt = (
                 "Application metadata and downloaded document evidence:\n"
-                + json.dumps({"metadata": model_metadata, "sources": sources}, ensure_ascii=False, indent=2)
+                + json.dumps({
+                    "metadata": model_metadata,
+                    "sources": sources,
+                    "preparation_warnings": preparation_warnings,
+                }, ensure_ascii=False, indent=2)
                 + "\n\nAttachments follow in the numbered order recorded above. "
-                "PDF attachments are page images; extracted page text is included above."
+                "PDF attachments are rendered page images. DOCX text and XLSX sheet/cell values "
+                "are included in the source JSON above."
             )
             with LLMClient(model_config_path) as llm_client:
                 if context_limit is not None:
@@ -201,12 +239,12 @@ def run_s3_document_screening(
 
             try:
                 document_findings = parse_document_findings(response)
+                document_findings["limitations"] = list(document_findings["limitations"])
+                document_findings["limitations"].extend(downloaded_warnings + preparation_warnings)
                 findings_name = f"{application_key}-prioritized-document-findings.json"
                 with (output_directory / findings_name).open("x", encoding="utf-8") as output:
                     json.dump(document_findings, output, ensure_ascii=False, indent=2)
                     output.write("\n")
-                document_findings["limitations"] = list(document_findings["limitations"])
-                document_findings["limitations"].extend(downloaded_warnings)
                 final_output = merge_document_findings(metadata, document_findings)
             except ValueError as error:
                 response_name = f"{application_key}-prioritized-response.txt"

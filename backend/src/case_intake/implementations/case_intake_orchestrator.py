@@ -65,6 +65,7 @@ def execute_case_intake_stage(
         warnings.append(
             f"Found {len(records)} email records; returning the first only. There should only be one in production."
         )
+    record = records[0]["extractions"]
 
     record = records[0]["extractions"]
     return {
@@ -74,6 +75,6 @@ def execute_case_intake_stage(
         # Consultations with more than 1 email should have been manually cleaned from raw folders where possible
         # This allows the code to handle multiple records, even though only one is expected in production
         # 'QC' filter works for most but not all
-        #"email_extraction": [record["extractions"] for record in records],
+        # old code: "email_extraction": [record["extractions"] for record in records],
         "email_extraction": record,
     }

@@ -1,6 +1,7 @@
 """Run the consultation stages in sequence and store their outputs under S3."""
 
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Optional, Union
 from uuid import uuid4
 
@@ -125,8 +126,9 @@ def run_s3_consultation(
             "prefix": f"{prefix}/document_screening",
             "s3_client": s3_client,
         }
-        if consultation_date is not None:
+        if consultation_date is not None: 
             document_screening_arguments["ignore_after"] = consultation_date
+            
         document_result = run_s3_document_screening(
             reference,
             base_url,

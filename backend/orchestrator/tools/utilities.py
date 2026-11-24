@@ -1,9 +1,10 @@
 """Shared helpers for the consultation orchestrator implementations."""
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
+from attrs import field
 import yaml
 
 
@@ -102,12 +103,17 @@ def extract_consultation_date(case_intake: dict) -> date | None:
     if field.get("status") != "stated":
         return None
     value = field.get("value")
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("A stated consultation_date must have a non-empty value.")
+
     try:
-        return date.fromisoformat(value.strip())
-    except ValueError as error:
-        raise ValueError("consultation_date must use YYYY-MM-DD format.") from error
+        value = datetime.strptime(
+            field.get("value"),
+            "%Y/%m/%d"
+        ).date()
+    except ValueError:
+        print("Invalid consultation date format for consultation: ", value)
+        value = None
+        
+    return value
 
 
 def build_decision_input(

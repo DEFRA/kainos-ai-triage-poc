@@ -1,11 +1,11 @@
-"""Write cleaned consultation emails for case intake.
+"""Write one cleaned email from the QC messages for each consultation.
 
-Keeps each parent email's headers and body, replaces its attachments with the
-non-checklist documents from the QC email, and logs each consultation.
+Keeps the original message in each QC thread and eligible QC attachments.
 Run from the project root: uv run python pre_processing/clean_consultation_emails.py
 """
 
 import csv
+import hashlib
 import re
 import sys
 from dataclasses import dataclass
@@ -19,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backend.src.case_intake.tools.email_parser import (  # noqa: E402
     eml_attachment_bytes,
     iter_eml_attachment_parts,
+    parse_email_file,
     parse_eml_bytes,
 )
 
@@ -30,6 +31,15 @@ NON_EMAIL_EXTENSIONS = DOCUMENT_EXTENSIONS | {".zip", ".xlsx", ".xls", ".csv", "
 LOG_FIELDS = ["consultation_id", "status", "source", "kept", "removed", "note"]
 EXCLUDED_NAME_TERMS = ("checklist", "response", "annex")
 QC_PATTERN = re.compile(r"(?<![a-z])qc(?![a-z])", re.IGNORECASE)
+QC_BODY_PATTERN = re.compile(
+    r"(?im)^\s*(?:(?:hi|hello)[,\s]+)?qc\s+(?:complete|completed)\b"
+    r"|^\s*please\s+qc\b"
+)
+CONSULTATION_ID_PATTERN = re.compile(r"(?<!\d)(\d{6})(?!\d)")
+FORWARDED_EMAIL_HEADERS = re.compile(
+    r"(?im)^From:[^\r\n]*\r?\n"
+    r"(?:(?:Sent|Date|To|Cc|Subject):[^\r\n]*\r?\n)+\s*"
+)
 
 
 @dataclass
@@ -44,7 +54,13 @@ def is_qc(text: str) -> bool:
 
 
 def is_qc_email(name: str, message: EmailMessage) -> bool:
-    return is_qc(name) or is_qc(str(message.get("Subject", "")))
+    body = message.get_body(preferencelist=("plain",))
+    body_text = str(body.get_content()) if body is not None else ""
+    return (
+        is_qc(name)
+        or is_qc(str(message.get("Subject", "")))
+        or bool(QC_BODY_PATTERN.search(body_text))
+    )
 
 
 def is_kept_document(filename: str) -> bool:
@@ -54,15 +70,131 @@ def is_kept_document(filename: str) -> bool:
     )
 
 
+def consultation_id(name: str, message: EmailMessage) -> str | None:
+    body = message.get_body(preferencelist=("plain",))
+    values = [name, str(message.get("Subject", ""))]
+    if body is not None:
+        values.append(str(body.get_content()))
+    for value in values:
+        match = CONSULTATION_ID_PATTERN.search(value)
+        if match:
+            return match.group(1)
+    return None
+
+
+def original_email_parts(message: EmailMessage) -> tuple[dict[str, str], str]:
+    body = message.get_body(preferencelist=("plain",))
+    if body is None:
+        return {}, ""
+
+    text = str(body.get_content())
+    matches = list(FORWARDED_EMAIL_HEADERS.finditer(text))
+    if not matches:
+        return {}, ""
+
+    root_match = matches[-1]
+    headers = {}
+    header_names = {"from": "From", "to": "To", "subject": "Subject", "sent": "Date", "date": "Date"}
+    for line in root_match.group().splitlines():
+        name, separator, value = line.partition(":")
+        output_name = header_names.get(name.strip().lower())
+        if separator and output_name:
+            headers[output_name] = value.strip()
+    return headers, text[root_match.end():].strip()
+
+
+def original_email_body(message: EmailMessage) -> str:
+    return original_email_parts(message)[1]
+
+
+def normalized_body(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def attachment_hash(attachment: Attachment) -> str:
+    return hashlib.sha256(attachment.payload).hexdigest()
+
+
+def unique_attachments(attachments: list[Attachment]) -> list[Attachment]:
+    unique = []
+    seen_hashes = set()
+    for attachment in attachments:
+        digest = attachment_hash(attachment)
+        if digest not in seen_hashes:
+            seen_hashes.add(digest)
+            unique.append(attachment)
+    return unique
+
+
+def merged_qc_content(
+    qc_emails: list[tuple[str, EmailMessage]],
+) -> tuple[dict[str, str], str]:
+    headers = {}
+    bodies = []
+    seen_bodies = set()
+    for _, message in qc_emails:
+        message_headers, body = original_email_parts(message)
+        if not headers and message_headers:
+            headers = message_headers
+        normalized = normalized_body(body)
+        if normalized and normalized not in seen_bodies:
+            seen_bodies.add(normalized)
+            bodies.append(body)
+    return headers, "\n\n".join(bodies)
+
+
+def parse_msg_email(path: Path) -> EmailMessage:
+    parsed, _, attachment_payloads = parse_email_file(path)
+    message = EmailMessage()
+    headers = parsed["headers"]
+    for output_name, source_name in (
+        ("Subject", "subject"),
+        ("Date", "datetime_raw"),
+        ("Message-ID", "message_id"),
+    ):
+        value = headers.get(source_name)
+        if value:
+            message[output_name] = str(value).replace("\r", " ").replace("\n", " ")
+
+    body = parsed["body"]
+    if body.get("text"):
+        message.set_content(body["text"])
+    elif body.get("html"):
+        message.set_content(body["html"], subtype="html")
+    else:
+        message.set_content("")
+
+    for attachment, payload in zip(parsed["attachments"], attachment_payloads):
+        if payload is None:
+            continue
+        content_type = attachment.get("mime_type", "application/octet-stream")
+        maintype, separator, subtype = content_type.partition("/")
+        if not separator:
+            maintype, subtype = "application", "octet-stream"
+        message.add_attachment(
+            payload,
+            maintype=maintype,
+            subtype=subtype,
+            filename=attachment.get("filename") or "attachment",
+        )
+    return message
+
+
 def load_folder_emails(folder: Path) -> list[tuple[str, EmailMessage]]:
-    # Extensionless files are emails too, so only known non-email types are skipped.
-    return [
-        (path.name, parse_eml_bytes(path.read_bytes()))
-        for path in sorted(folder.iterdir())
-        if path.is_file()
-        and not path.name.startswith(".")
-        and path.suffix.lower() not in NON_EMAIL_EXTENSIONS
-    ]
+    emails = []
+    for path in sorted(folder.iterdir()):
+        if (
+            not path.is_file()
+            or path.name.startswith(".")
+            or path.suffix.lower() in NON_EMAIL_EXTENSIONS
+        ):
+            continue
+        if path.suffix.lower() == ".msg":
+            message = parse_msg_email(path)
+        else:
+            message = parse_eml_bytes(path.read_bytes())
+        emails.append((path.name, message))
+    return emails
 
 
 def leaf_attachments(message: EmailMessage) -> list[Attachment]:
@@ -90,18 +222,18 @@ def nested_qc_emails(parent: EmailMessage) -> list[tuple[str, EmailMessage]]:
     return candidates
 
 
-def build_clean_email(parent: EmailMessage, kept: list[Attachment]) -> EmailMessage:
+def build_clean_email(
+    headers: dict[str, str],
+    kept: list[Attachment],
+    body_text: str,
+) -> EmailMessage:
     clean = EmailMessage()
-    for header in ("Subject", "From", "To", "Date", "Message-ID"):
-        value = parent.get(header)
+    for header in ("Subject", "From", "To", "Date"):
+        value = headers.get(header)
         if value:
             clean[header] = str(value)
 
-    body = parent.get_body(preferencelist=("plain", "html"))
-    if body is None:
-        clean.set_content("")
-    else:
-        clean.set_content(body.get_content(), subtype=body.get_content_subtype())
+    clean.set_content(body_text)
 
     for attachment in kept:
         maintype, _, subtype = attachment.content_type.partition("/")
@@ -133,64 +265,87 @@ def make_row(
 
 
 def process_consultation(folder: Path) -> list[dict[str, str]]:
+    groups = collect_qc_groups(folder)
+    if not groups:
+        return [make_row(folder.name, "skipped", note="no QC email found")]
+    return [
+        process_qc_group(case_id, group)
+        for case_id, group in sorted(groups.items())
+    ]
+
+
+def collect_qc_groups(folder: Path) -> dict[str, list[tuple[str, EmailMessage]]]:
     emails = load_folder_emails(folder)
-    parents = [(name, msg) for name, msg in emails if not is_qc_email(name, msg)]
-    standalone_qcs = [(name, msg) for name, msg in emails if is_qc_email(name, msg)]
+    qc_emails = [(name, message) for name, message in emails if is_qc_email(name, message)]
+    if not qc_emails:
+        return {}
 
-    if not parents:
-        return [make_row(folder.name, "error", note="no parent .eml found")]
+    folder_match = CONSULTATION_ID_PATTERN.search(folder.name)
+    fallback_id = folder_match.group(1) if folder_match else folder.name
+    groups: dict[str, list[tuple[str, EmailMessage]]] = {}
+    seen_messages = set()
 
-    if len(parents) == 1:
-        units = [(folder.name, parents[0][1])]
-    else:
-        units = [(f"{folder.name}_{index}", msg) for index, (_, msg) in enumerate(parents, 1)]
+    def add_qc_email(name: str, message: EmailMessage, default_id: str) -> None:
+        if id(message) in seen_messages:
+            return
+        seen_messages.add(id(message))
+        case_id = consultation_id(name, message) or default_id
+        groups.setdefault(case_id, []).append((name, message))
+        for nested_name, nested_message in nested_qc_emails(message):
+            add_qc_email(nested_name, nested_message, case_id)
 
-    return [process_unit(unit_id, parent, standalone_qcs) for unit_id, parent in units]
+    for name, message in qc_emails:
+        add_qc_email(name, message, fallback_id)
+
+    return groups
 
 
-def process_unit(
-    unit_id: str,
-    parent: EmailMessage,
-    standalone_qcs: list[tuple[str, EmailMessage]],
+def process_qc_group(
+    case_id: str,
+    qc_emails: list[tuple[str, EmailMessage]],
 ) -> dict[str, str]:
-    parent_attachments = leaf_attachments(parent)
-    candidates = [(f"file:{name}", msg) for name, msg in standalone_qcs]
-    candidates += nested_qc_emails(parent)
-
-    source_label, source_attachments = "parent", parent_attachments
-    for label, qc_message in candidates:
-        attachments = leaf_attachments(qc_message)
-        if any(is_kept_document(a.filename) for a in attachments):
-            source_label, source_attachments = label, attachments
-            break
-
-    kept = [a for a in source_attachments if is_kept_document(a.filename)]
-    kept_ids = {id(a) for a in kept}
-    removed = [f"parent: {a.filename}" for a in parent_attachments if id(a) not in kept_ids]
-    if source_label != "parent":
-        removed += [f"qc: {a.filename}" for a in source_attachments if id(a) not in kept_ids]
-
+    all_attachments = [
+        (source, attachment)
+        for source, message in qc_emails
+        for attachment in leaf_attachments(message)
+    ]
+    eligible_attachments = [
+        attachment
+        for _, attachment in all_attachments
+        if is_kept_document(attachment.filename)
+    ]
+    kept = unique_attachments(eligible_attachments)
+    kept_ids = {id(attachment) for attachment in kept}
+    removed = [
+        f"{source}: {attachment.filename}"
+        for source, attachment in all_attachments
+        if id(attachment) not in kept_ids
+    ]
+    source_label = "; ".join(source for source, _ in qc_emails)
     if not kept:
         return make_row(
-            unit_id,
+            case_id,
             "skipped",
-            source="none",
+            source=source_label,
             removed=removed,
-            note="no document found in QC email or parent",
+            note="no eligible document found in QC emails",
         )
 
-    status = "ok" if source_label != "parent" else "fallback"
-    output_folder = OUTPUT_ROOT / unit_id
+    headers, body_text = merged_qc_content(qc_emails)
+    if not headers.get("Subject"):
+        headers["Subject"] = f"Consultation {case_id} (cleaned)"
+    clean = build_clean_email(headers, kept, body_text)
+    output_folder = OUTPUT_ROOT / case_id
     output_folder.mkdir(parents=True, exist_ok=True)
-    clean = build_clean_email(parent, kept)
-    (output_folder / f"{unit_id} clean.eml").write_bytes(clean.as_bytes(policy=policy.default))
+    (output_folder / f"{case_id} clean.eml").write_bytes(clean.as_bytes(policy=policy.default))
 
     return make_row(
-        unit_id,
-        status,
+        case_id,
+        "ok",
         source=source_label,
         kept=[a.filename for a in kept],
         removed=removed,
+        note="" if body_text else "no original message body could be identified",
     )
 
 
@@ -204,15 +359,27 @@ def write_log(rows: list[dict[str, str]]) -> None:
 
 def main() -> None:
     rows = []
+    qc_groups: dict[str, list[tuple[str, EmailMessage]]] = {}
     for folder in sorted(path for path in INPUT_ROOT.iterdir() if path.is_dir() and not path.name.startswith(".")):
         try:
-            rows.extend(process_consultation(folder))
+            folder_groups = collect_qc_groups(folder)
+            if not folder_groups:
+                rows.append(make_row(folder.name, "skipped", note="no QC email found"))
+            for case_id, group in folder_groups.items():
+                qc_groups.setdefault(case_id, []).extend(group)
         except Exception as error:
             # One bad folder should not stop the batch; the error is written to the log.
             rows.append(make_row(folder.name, "error", note=f"{type(error).__name__}: {error}"))
 
+    rows.extend(
+        process_qc_group(case_id, group)
+        for case_id, group in sorted(qc_groups.items())
+    )
     write_log(rows)
-    counts = {status: sum(row["status"] == status for row in rows) for status in ("ok", "fallback", "skipped", "error")}
+    counts = {
+        status: sum(row["status"] == status for row in rows)
+        for status in ("ok", "skipped", "error")
+    }
     print(f"Processed {len(rows)} consultations: {counts}")
     print(f"Log: {LOG_PATH}")
 

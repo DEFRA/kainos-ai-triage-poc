@@ -3,9 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from openpyxl import Workbook
 import pypdfium2 as pdfium
 from PIL import Image, ImageDraw
-from backend.src.utilities.document_parser import parse_doc, parse_pdf, parse_rtf
+from backend.src.utilities.document_parser import parse_doc, parse_pdf, parse_rtf, parse_xlsx
 
 
 class DocumentParserTests(unittest.TestCase):
@@ -177,6 +178,39 @@ class DocumentTextParserTests(unittest.TestCase):
         path.write_bytes(b"not an RTF document")
         with self.assertRaisesRegex(ValueError, "Not an RTF"):
             parse_rtf(path)
+
+    def test_xlsx_extraction_preserves_sheet_names_addresses_and_formulas(self):
+        path = self.root / "application.xlsx"
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Application Details"
+        worksheet["A1"] = "Site area"
+        worksheet["B1"] = "1.25 ha"
+        worksheet["A2"] = "Total"
+        worksheet["B2"] = "=SUM(1,2)"
+        workbook.create_sheet("Empty sheet")
+        workbook.save(path)
+
+        self.assertEqual(parse_xlsx(path), [
+            {"name": "Application Details", "cells": [
+                {"address": "A1", "value": "Site area"},
+                {"address": "B1", "value": "1.25 ha"},
+                {"address": "A2", "value": "Total"},
+                {"address": "B2", "value": "=SUM(1,2)"},
+            ]},
+            {"name": "Empty sheet", "cells": []},
+        ])
+
+    def test_xlsx_extraction_rejects_invalid_and_empty_workbooks(self):
+        invalid_path = self.root / "invalid.xlsx"
+        invalid_path.write_bytes(b"not an xlsx")
+        with self.assertRaisesRegex(ValueError, "Could not read XLSX"):
+            parse_xlsx(invalid_path)
+
+        empty_path = self.root / "empty.xlsx"
+        Workbook().save(empty_path)
+        with self.assertRaisesRegex(ValueError, "no non-empty cells"):
+            parse_xlsx(empty_path)
 
 
 if __name__ == "__main__":

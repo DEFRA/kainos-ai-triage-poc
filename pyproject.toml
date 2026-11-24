@@ -27,6 +27,7 @@ dependencies = [
     "uvicorn>=0.34,<1",
     "striprtf>=0.0.29,<1",
     "psycopg[binary]>=3.3.9",
+    "openpyxl>=3.1.5",
 ]
 
 [project.scripts]
