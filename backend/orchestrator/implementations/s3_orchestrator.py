@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from datetime import datetime
+import traceback
 from typing import Any, Optional, Union
 from uuid import uuid4
 
@@ -44,6 +45,7 @@ def _save_run(run: dict, s3_client: Any, bucket: str, prefix: str) -> bool:
         run["errors"].append({
             "stage": "persistence",
             "message": f"{type(error).__name__}: {error}",
+            "traceback": traceback.format_exc(),
         })
         return False
     return True
@@ -90,6 +92,7 @@ def run_s3_consultation(
         run["errors"].append({
             "stage": "configuration",
             "message": f"{type(error).__name__}: {error}",
+            "traceback": traceback.format_exc(),
         })
         _save_run(run, s3_client, bucket, prefix)
         return run
@@ -115,6 +118,7 @@ def run_s3_consultation(
         run["errors"].append({
             "stage": "case_intake",
             "message": f"{type(error).__name__}: {error}",
+            "traceback": traceback.format_exc(),
         })
         _save_run(run, s3_client, bucket, prefix)
         return run
@@ -146,6 +150,7 @@ def run_s3_consultation(
         run["errors"].append({
             "stage": "document_screening",
             "message": f"{type(error).__name__}: {error}",
+            "traceback": traceback.format_exc(),
         })
         _save_run(run, s3_client, bucket, prefix)
         return run
@@ -167,6 +172,7 @@ def run_s3_consultation(
         run["errors"].append({
             "stage": "spatial_screening",
             "message": f"{type(error).__name__}: {error}",
+            "traceback": traceback.format_exc(),
         })
         _save_run(run, s3_client, bucket, prefix)
         return run
@@ -188,6 +194,7 @@ def run_s3_consultation(
         run["errors"].append({
             "stage": "decision",
             "message": f"{type(error).__name__}: {error}",
+            "traceback": traceback.format_exc(),
         })
         _save_run(run, s3_client, bucket, prefix)
         return run
