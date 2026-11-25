@@ -1,7 +1,6 @@
 import copy
 import csv
 import json
-import re
 import tempfile
 from pathlib import Path
 from os import PathLike
@@ -17,6 +16,7 @@ from backend.src.utilities.document_parser import (
     parse_rtf,
 )
 from backend.src.utilities.llm_client import LLMClient
+from backend.src.utilities.llm_json_parser import parse_llm_json
 
 
 def load_idox_mapping(path: str | PathLike[str]) -> list[dict[str, str | int]]:
@@ -400,19 +400,9 @@ def extract_from_consultation(
                     attachments=image_paths,
                 )
 
-            # Accept plain JSON or a JSON code block and require an object
             try:
-                text = response_text.strip()
-                match = re.fullmatch(
-                    r"```(?:json)?[ \t]*\r?\n(.*?)\s*```",
-                    text,
-                    flags=re.IGNORECASE | re.DOTALL,
-                )
-                if match:
-                    text = match.group(1)
-
-                extractions = json.loads(text)
-            except json.JSONDecodeError as error:
+                extractions = parse_llm_json(response_text)
+            except ValueError as error:
                 raise ValueError(
                     f"Model returned invalid JSON for {metadata_key}"
                 ) from error
