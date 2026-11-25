@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.src.ai_triage.api import create_app
 from backend.orchestrator.implementations.orchestrator import run_consultation
+from backend.orchestrator.tools.utilities import extract_consultation_date
 
 
 ORCHESTRATOR_MODULE = "backend.orchestrator.implementations.orchestrator"
@@ -479,16 +480,45 @@ class OrchestratorTests(unittest.TestCase):
             date(2026, 10, 21),
         )
 
-    def test_malformed_stated_consultation_date_stops_at_case_intake(self):
-        case_data = make_case_intake(consultation_date="21/10/2026")
-        with patch(
-            f"{ORCHESTRATOR_MODULE}.run_document_screening"
-        ) as document_screening:
+    def test_consultation_date_accepts_common_numeric_formats(self):
+        for value in (
+            "2026/10/21",
+            "2026-10-21",
+            "21/10/2026",
+            "21-10-2026",
+            "21\\10\\2026",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    extract_consultation_date(
+                        make_case_intake(consultation_date=value)
+                    ),
+                    date(2026, 10, 21),
+                )
+
+    def test_malformed_stated_consultation_date_warns_and_continues_without_filter(self):
+        case_data = make_case_intake(consultation_date="16th January 2026")
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+        with (
+            patch(
+                f"{ORCHESTRATOR_MODULE}.run_document_screening",
+                return_value=make_document_result(ring),
+            ) as document_screening,
+            patch(
+                f"{ORCHESTRATOR_MODULE}.run_irz_code_spatial_screening",
+                return_value=make_spatial_result(ring),
+            ),
+            patch(
+                f"{ORCHESTRATOR_MODULE}.run_decision",
+                return_value={"classification": "unnecessary", "checklist": [{}]},
+            ),
+            self.assertWarnsRegex(RuntimeWarning, "Continuing without date filtering"),
+        ):
             result = run_consultation(case_data, "model.yaml", self.output_directory)
 
-        document_screening.assert_not_called()
-        self.assertEqual(result["errors"][0]["stage"], "case_intake")
-        self.assertIn("YYYY-MM-DD", result["errors"][0]["message"])
+        self.assertEqual(result["errors"], [])
+        document_screening.assert_called_once()
+        self.assertNotIn("ignore_after", document_screening.call_args.kwargs)
 
     def test_document_result_without_final_output_is_rejected(self):
         case_data = make_case_intake()

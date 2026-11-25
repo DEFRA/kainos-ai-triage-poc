@@ -59,9 +59,6 @@ Below are examples of the documents falling into the different priorities.
 - Schedule of works
 - Tree preservation orders
 
-**5. When unsure**
-If you cannot place a document, choose `must` and set `uncertain: true`. Never use uncertainty as a reason for `maybe` or `skip`. Vague metadata such as "Document" or "Supporting information" is `must` with `uncertain: true`.
-
 
 ## Output
 

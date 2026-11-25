@@ -1,6 +1,7 @@
 """Shared helpers for the consultation orchestrator implementations."""
 
 import json
+import warnings
 from datetime import date, datetime
 from pathlib import Path
 
@@ -103,17 +104,29 @@ def extract_consultation_date(case_intake: dict) -> date | None:
     if field.get("status") != "stated":
         return None
     value = field.get("value")
+    if not isinstance(value, str) or not value.strip():
+        warnings.warn(
+            "Invalid consultation date; expected a supported numeric date format. "
+            "Continuing without date filtering.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
 
-    try:
-        value = datetime.strptime(
-            field.get("value"),
-            "%Y/%m/%d"
-        ).date()
-    except ValueError:
-        print("Invalid consultation date format for consultation: ", value)
-        value = None
-        
-    return value
+    normalized_value = value.strip().replace("\\", "/")
+    for date_format in ("%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(normalized_value, date_format).date()
+        except ValueError:
+            continue
+
+    warnings.warn(
+        f"Invalid consultation date {value!r}; expected YYYY/MM/DD, YYYY-MM-DD, "
+        "DD/MM/YYYY, or DD-MM-YYYY. Continuing without date filtering.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return None
 
 
 def build_decision_input(

@@ -546,6 +546,18 @@ Backend orchestration tests:
 Backend S3 tests:
 `uv run python -m unittest discover -s tests/backend -p 'test_s3_*.py' -v`
 
+LPA client tests (offline by default):
+`uv run python -m unittest discover -s tests/backend -p test_lpa_client.py -v`
+
+Live polygon checks for East Devon `26/0652/FUL`, Southampton `25/01506/FUL`, and
+Dacorum `26/01765/OUT`:
+`RUN_LPA_LIVE_TESTS=1 uv run python -m unittest discover -s tests/backend -p test_lpa_client.py -k real_applications -v`
+
+The live checks search the actual portals and require a non-empty polygon in the
+existing coordinate-list format. They do not download documents, call models, or
+infer polygons. Portal outages and access restrictions fail the checks rather
+than being skipped. Add `--system-certs` after `uv` if required by your environment.
+
 Frontend tests:
 `uv run python -m unittest discover -s tests/frontend -v`
 

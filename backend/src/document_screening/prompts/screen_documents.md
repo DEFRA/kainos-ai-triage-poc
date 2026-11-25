@@ -43,6 +43,8 @@ These items should be stated in the application form or site location plan.
 | `site_address` | Address of the development site only, as written. | — |
 | `site_area` | Value and unit as stated. | ha, m², acres |
 
+`coordinates` is a composite field with Field-style `status` and `reason`. If no coordinates are stated, set `status` to `not_stated`, all coordinate values to `null`, `confidence` to `null`, and `evidence` to `[]`. For stated coordinates, use `status: "stated"` and a confidence level. If coordinate values conflict, do not choose or combine them: set `status` to `conflicting`, coordinate values and confidence to `null`, and include the conflicting evidence. Do not use a status such as `not_stated` as a confidence value.
+
 ## Site and surroundings
 
 | Field | Description | Examples |
@@ -122,7 +124,7 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
     "minerals_waste_new": Signal
   },
   "location": {
-    "coordinates": {"easting": number|null, "northing": number|null, "grid_reference": string|null, "units": string|null, "crs": string|null, "confidence": "high"|"medium"|"low", "evidence": [Evidence]},
+    "coordinates": {"easting": number|null, "northing": number|null, "grid_reference": string|null, "units": string|null, "crs": string|null, "status": "stated"|"not_stated"|"conflicting"|"unclear", "confidence": "high"|"medium"|"low"|null, "reason": string, "evidence": [Evidence]},
     "site_address": Field,
     "site_area": Field
   },

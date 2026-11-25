@@ -320,33 +320,17 @@ def parse_document_findings(response: str) -> dict[str, object]:
         {"coordinates", "site_address", "site_area"},
         "location",
     )
-    coordinates = _require_mapping(
-        location["coordinates"],
-        {"easting", "northing", "grid_reference", "units", "crs", "confidence", "evidence"},
-        "location.coordinates",
-    )
-    for key in ("easting", "northing"):
-        coordinate = coordinates[key]
-        if isinstance(coordinate, str):
-            try:
-                coordinate = float(coordinate.strip())
-            except ValueError:
-                raise ValueError(
-                    f"location.coordinates.{key} must be a finite number or null."
-                ) from None
-            if coordinate.is_integer():
-                coordinate = int(coordinate)
-            coordinates[key] = coordinate
-        if coordinate is not None and (
-            type(coordinate) not in {int, float} or not math.isfinite(coordinate)
-        ):
-            raise ValueError(f"location.coordinates.{key} must be a finite number or null.")
-    for key in ("grid_reference", "units", "crs"):
-        if coordinates[key] is not None and not isinstance(coordinates[key], str):
-            raise ValueError(f"location.coordinates.{key} must be a string or null.")
-    if coordinates["confidence"] not in _CONFIDENCE_LEVELS:
-        raise ValueError("location.coordinates has an invalid confidence.")
-    _validate_evidence(coordinates["evidence"], "location.coordinates evidence")
+    coordinates = location["coordinates"]
+    if isinstance(coordinates, dict):
+        for key in ("easting", "northing"):
+            coordinate = coordinates.get(key)
+            if isinstance(coordinate, str):
+                try:
+                    coordinate = float(coordinate.strip())
+                except ValueError:
+                    continue
+                if math.isfinite(coordinate):
+                    coordinates[key] = int(coordinate) if coordinate.is_integer() else coordinate
     _validate_field(location["site_address"], "location.site_address")
     _validate_field(location["site_area"], "location.site_area")
 
@@ -480,9 +464,12 @@ def add_polygon_metadata(
         coordinates = location.get("coordinates")
         if not isinstance(coordinates, dict):
             raise ValueError("Cannot infer polygon: document coordinates are unavailable.")
-        if coordinates.get("confidence") not in {"medium", "high"}:
+        if (
+            coordinates.get("status") != "stated"
+            or coordinates.get("confidence") not in ("medium", "high")
+        ):
             raise ValueError(
-                "Cannot infer polygon: coordinates must have medium or high confidence."
+                "Cannot infer polygon: coordinates must be stated with medium or high confidence."
             )
 
         easting = coordinates.get("easting")
