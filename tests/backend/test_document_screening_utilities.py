@@ -27,12 +27,16 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not valid JSON"):
             parse_document_findings("not JSON")
 
-    def test_rejects_invalid_nested_screening_schema(self):
+    def test_ignores_unusable_coordinates_when_lpa_polygon_exists(self):
         findings = valid_document_findings()
         findings["location"]["coordinates"]["easting"] = "unknown"
+        findings["location"]["coordinates"]["confidence"] = "not_stated"
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
 
-        with self.assertRaisesRegex(ValueError, "finite number or null"):
-            parse_document_findings(json.dumps(findings))
+        parsed = parse_document_findings(json.dumps(findings))
+        result = add_polygon_metadata({**parsed, "polygon": [ring]})
+
+        self.assertEqual(result["polygon"]["polygon_source"], "lpa_maps")
 
     def test_accepts_empty_evidence_on_a_stated_field(self):
         findings = valid_document_findings()
@@ -61,6 +65,41 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
         self.assertEqual(parsed["location"]["coordinates"]["easting"], 359926)
         self.assertIs(type(parsed["location"]["coordinates"]["easting"]), int)
         self.assertEqual(parsed["location"]["coordinates"]["northing"], 322794.5)
+
+    def test_accepts_not_stated_coordinates_when_lpa_polygon_exists(self):
+        findings = valid_document_findings()
+        findings["location"]["coordinates"] = {
+            "easting": None,
+            "northing": None,
+            "grid_reference": None,
+            "units": None,
+            "crs": None,
+            "status": "not_stated",
+            "confidence": "not_stated",
+            "reason": "No site coordinates were stated in the supplied documents.",
+            "evidence": [],
+        }
+        ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
+
+        parsed = parse_document_findings(json.dumps(findings))
+        result = add_polygon_metadata({**parsed, "polygon": [ring]})
+
+        self.assertEqual(result["location"]["coordinates"]["status"], "not_stated")
+        self.assertEqual(result["polygon"]["polygon_source"], "lpa_maps")
+
+    def test_rejects_not_stated_coordinates_when_polygon_inference_is_required(self):
+        final_output = {**valid_document_findings(), "polygon": []}
+        final_output["location"]["coordinates"].update(
+            easting=None,
+            northing=None,
+            status="not_stated",
+            confidence=None,
+            reason="No site coordinates were stated in the supplied documents.",
+            evidence=[],
+        )
+
+        with self.assertRaisesRegex(ValueError, "coordinates must be stated with medium or high confidence"):
+            add_polygon_metadata(final_output)
 
     def test_adds_lpa_polygon_provenance(self):
         ring = [[500000, 200000], [500100, 200000], [500100, 200100], [500000, 200000]]
@@ -116,7 +155,7 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
         final_output = {**valid_document_findings(), "polygon": []}
         final_output["location"]["coordinates"]["confidence"] = "low"
 
-        with self.assertRaisesRegex(ValueError, "coordinates must have medium or high confidence"):
+        with self.assertRaisesRegex(ValueError, "coordinates must be stated with medium or high confidence"):
             add_polygon_metadata(final_output)
 
         final_output["location"]["coordinates"]["confidence"] = "high"

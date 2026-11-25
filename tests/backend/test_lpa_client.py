@@ -1,4 +1,7 @@
 import json
+import math
+import os
+import socket
 import tempfile
 import threading
 import unittest
@@ -112,10 +115,10 @@ def search_responses(token="private-token"):
 
 class PublicAccessClientTests(unittest.TestCase):
     def setUp(self):
-        settings_patch = patch("document_screening.tools.lpa_client._load_lpa_settings", return_value={})
+        settings_patch = patch("backend.src.document_screening.tools.lpa_client._load_lpa_settings", return_value={})
         settings_patch.start()
         self.addCleanup(settings_patch.stop)
-        sleep_patch = patch("document_screening.tools.lpa_client.sleep")
+        sleep_patch = patch("backend.src.document_screening.tools.lpa_client.sleep")
         self.sleep = sleep_patch.start()
         self.addCleanup(sleep_patch.stop)
         self.client = PublicAccessClient(BASE_URL.rstrip("/"), timeout=12, user_agent="Test/1")
@@ -163,7 +166,7 @@ class PublicAccessClientTests(unittest.TestCase):
         self.sleep.assert_not_called()
 
     def test_429_honours_retry_after_http_date(self):
-        with patch("document_screening.tools.lpa_client.datetime") as clock, patch.object(
+        with patch("backend.src.document_screening.tools.lpa_client.datetime") as clock, patch.object(
             self.client.session, "request", side_effect=[
                 response("", status=429, headers={
                     "Retry-After": "Thu, 29 Oct 2026 12:00:12 GMT",
@@ -201,7 +204,7 @@ class PublicAccessClientTests(unittest.TestCase):
             "max_wait_seconds": "15",
             "refresh_session_on_429": "false",
         }
-        with patch("document_screening.tools.lpa_client._load_lpa_settings", return_value=settings) as load, patch.dict(
+        with patch("backend.src.document_screening.tools.lpa_client._load_lpa_settings", return_value=settings) as load, patch.dict(
             "os.environ", {"LPA_REQUEST_INTERVAL_SECONDS": "None"}, clear=True,
         ):
             client = PublicAccessClient(BASE_URL)
@@ -254,7 +257,7 @@ class PublicAccessClientTests(unittest.TestCase):
         fresh_session.request.side_effect = [response("ok"), response("next")]
         with patch.object(client.session, "request", return_value=response("", status=429)) as original, patch.object(
             client, "_new_session", return_value=fresh_session,
-        ), self.assertLogs("document_screening.tools.lpa_client", level="WARNING"):
+        ), self.assertLogs("backend.src.document_screening.tools.lpa_client", level="WARNING"):
             self.assertEqual(client._request("GET", BASE_URL).content, b"ok")
             self.assertEqual(client._request("GET", BASE_URL).content, b"next")
         original.assert_called_once()
@@ -268,7 +271,7 @@ class PublicAccessClientTests(unittest.TestCase):
         fresh_session.request.side_effect = [response("", status=429), response("", status=429)]
         with patch.object(self.client.session, "request", return_value=response("", status=429)), patch.object(
             self.client, "_new_session", return_value=fresh_session,
-        ) as refresh, self.assertLogs("document_screening.tools.lpa_client", level="WARNING"):
+        ) as refresh, self.assertLogs("backend.src.document_screening.tools.lpa_client", level="WARNING"):
             with self.assertRaisesRegex(requests.HTTPError, "after 2 session refreshes"):
                 self.client._request("GET", BASE_URL)
         self.assertEqual(refresh.call_count, 2)
@@ -398,7 +401,7 @@ class PublicAccessClientTests(unittest.TestCase):
         with patch.object(self.client.session, "request", side_effect=[
             response(DOCUMENTS), response("", status=429),
         ]), patch.object(self.client, "_new_session", return_value=second_session) as refresh, self.assertLogs(
-            "document_screening.tools.lpa_client", level="WARNING",
+            "backend.src.document_screening.tools.lpa_client", level="WARNING",
         ) as logs:
             self.assertEqual(
                 self.client.download_document("KEY", "123", reference=REFERENCE), b"recovered",
@@ -427,7 +430,7 @@ class PublicAccessClientTests(unittest.TestCase):
         with patch.object(self.client.session, "request", side_effect=[
             response(DOCUMENTS), response("", status=429),
         ]), patch.object(self.client, "_new_session", return_value=second_session) as refresh, self.assertLogs(
-            "document_screening.tools.lpa_client", level="WARNING",
+            "backend.src.document_screening.tools.lpa_client", level="WARNING",
         ):
             with self.assertRaises(requests.HTTPError):
                 self.client.download_document("KEY", "123")
@@ -443,7 +446,7 @@ class PublicAccessClientTests(unittest.TestCase):
             response(DOCUMENTS), response("", status=429),
         ]), patch.object(self.client, "_new_session", side_effect=[
             first_fresh_session, second_fresh_session,
-        ]) as refresh, self.assertLogs("document_screening.tools.lpa_client", level="WARNING"):
+        ]) as refresh, self.assertLogs("backend.src.document_screening.tools.lpa_client", level="WARNING"):
             self.assertEqual(self.client.download_document("KEY", "123"), b"recovered")
         self.assertEqual(refresh.call_count, 2)
         self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [5, 5])
@@ -460,7 +463,7 @@ class PublicAccessClientTests(unittest.TestCase):
         with patch.object(self.client.session, "request", side_effect=[
             response(DOCUMENTS), response("", status=429),
         ]), patch.object(self.client, "_new_session", return_value=second_session) as refresh, self.assertLogs(
-            "document_screening.tools.lpa_client", level="WARNING",
+            "backend.src.document_screening.tools.lpa_client", level="WARNING",
         ):
             self.assertEqual(self.client.download_document("KEY", "123"), b"recovered")
             self.assertEqual(self.client.download_document("KEY", "456"), b"next document")
@@ -474,7 +477,7 @@ class PublicAccessClientTests(unittest.TestCase):
         with patch.object(self.client.session, "request", side_effect=[
             response(DOCUMENTS), response("", status=429, headers={"Retry-After": "15"}),
         ]), patch.object(self.client, "_new_session", return_value=second_session), self.assertLogs(
-            "document_screening.tools.lpa_client", level="WARNING",
+            "backend.src.document_screening.tools.lpa_client", level="WARNING",
         ):
             self.client.download_document("KEY", "123")
         self.sleep.assert_called_once_with(15)
@@ -673,7 +676,7 @@ class PublicAccessClientTests(unittest.TestCase):
         self.client._request_interval = 0
         self.client._has_requested = False
         with tempfile.TemporaryDirectory() as directory, \
-                patch("document_screening.tools.lpa_client.PublicAccessClient", return_value=worker):
+                patch("backend.src.document_screening.tools.lpa_client.PublicAccessClient", return_value=worker):
             with self.assertWarnsRegex(RuntimeWarning, "Could not download document failed"):
                 result = self.client.download_documents_concurrently(
                     "KEY", metadata, directory, ["ok", "failed"], max_workers=2
@@ -833,6 +836,147 @@ class PublicAccessClientTests(unittest.TestCase):
             "ISPAVISIBLE = 1 AND KEYVAL = 'KEY'",
         )
 
+    def test_get_coordinates_discovers_web_appbuilder_without_trying_wfs(self):
+        map_url = BASE_URL + "applicationDetails.do?activeTab=map&keyVal=KEY"
+        map_page = ARCGIS_MAP_PAGE.replace(
+            "/portal/apps/experiencebuilder/experience/", "/gis/apps/webappviewer/index.html",
+        )
+        ring = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
+        feature_data = {
+            "features": [{
+                "attributes": {"KEYVAL": "KEY", "REFVAL": REFERENCE},
+                "geometry": {"rings": [ring]},
+            }],
+        }
+        with patch.object(
+            self.client, "_get_tab",
+            return_value=(BeautifulSoup(map_page, "html.parser"), map_url),
+        ), patch.object(self.client.session, "request", side_effect=[
+            response(""),
+            response(json.dumps({"map": {"itemId": "WEBMAP"}})),
+            response(json.dumps(ARCGIS_WEB_MAP_DATA)),
+            response(json.dumps(feature_data)),
+        ]) as request:
+            self.assertEqual(
+                self.client.get_coordinates("KEY", reference=REFERENCE), {"polygon": [ring]},
+            )
+        self.assertEqual(request.call_count, 4)
+        self.assertEqual(
+            request.call_args_list[1].args[1],
+            "https://planning.test/gis/sharing/rest/content/items/APP/data",
+        )
+        self.assertEqual(
+            request.call_args_list[2].args[1],
+            "https://planning.test/gis/sharing/rest/content/items/WEBMAP/data",
+        )
+
+    def test_get_coordinates_uses_declared_external_map_with_isolated_sessions(self):
+        external_portal = "https://maps.example.org/arcgis"
+        external_layer = "https://features.example.net/server/rest/services/planning/FeatureServer/7"
+        web_map_url = external_portal + "/sharing/rest/content/items/WEBMAP/data"
+        ring = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
+        app_data = {
+            "dataSources": {"source": {
+                "type": "WEB_MAP", "itemId": "WEBMAP", "portalUrl": external_portal,
+            }},
+        }
+        web_map = {"operationalLayers": [{
+            "title": "Application Polygons", "url": external_layer,
+        }]}
+        features = {"features": [{
+            "attributes": {"KEYVAL": "KEY", "REFVAL": REFERENCE},
+            "geometry": {"rings": [ring]},
+        }]}
+        external_session = Mock()
+        external_session.__enter__ = Mock(return_value=external_session)
+        external_session.__exit__ = Mock(return_value=False)
+        external_session.request.side_effect = [
+            response(json.dumps(web_map), url=web_map_url),
+            response(json.dumps(features), url=external_layer + "/query"),
+        ]
+        public_address = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        with patch.object(
+            self.client, "_get_tab",
+            return_value=(BeautifulSoup(ARCGIS_MAP_PAGE, "html.parser"), BASE_URL),
+        ), patch.object(self.client.session, "request", side_effect=[
+            response(""), response(json.dumps(app_data)),
+        ]) as portal_request, patch.object(
+            self.client, "_new_session", return_value=external_session,
+        ) as new_session, patch(
+            "backend.src.document_screening.tools.lpa_client.socket.getaddrinfo",
+            return_value=public_address,
+        ):
+            self.assertEqual(
+                self.client.get_coordinates("KEY", reference=REFERENCE), {"polygon": [ring]},
+            )
+        self.assertEqual(portal_request.call_count, 2)
+        self.assertEqual(new_session.call_count, 2)
+        self.assertEqual(external_session.request.call_args_list[0].args, ("GET", web_map_url))
+        self.assertEqual(
+            external_session.request.call_args_list[1].args, ("GET", external_layer + "/query"),
+        )
+        for request_call in external_session.request.call_args_list:
+            self.assertFalse(request_call.kwargs["allow_redirects"])
+            self.assertNotIn("data", request_call.kwargs)
+            self.assertNotIn("cookies", request_call.kwargs)
+            self.assertEqual(set(request_call.kwargs["headers"]), {"Referer"})
+
+    def test_map_requests_reject_unsafe_destinations(self):
+        for address in ("127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "224.0.0.1"):
+            with self.subTest(address=address), patch(
+                "backend.src.document_screening.tools.lpa_client.socket.getaddrinfo",
+                return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))],
+            ), patch.object(self.client, "_new_session") as session:
+                with self.assertRaisesRegex(ValueError, "public addresses"):
+                    self.client._request("GET", "https://maps.example.org/data", map_request=True)
+                session.assert_not_called()
+        for url in (
+            "http://maps.example.org/data", "https://user:secret@maps.example.org/data",
+            "https://maps.example.org:8443/data",
+        ):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "public HTTPS"):
+                self.client._request("GET", url, map_request=True)
+
+    def test_map_requests_reject_mixed_public_private_dns_and_resolution_failure(self):
+        with patch(
+            "backend.src.document_screening.tools.lpa_client.socket.getaddrinfo",
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443)),
+            ],
+        ), self.assertRaisesRegex(ValueError, "public addresses"):
+            self.client._check_map_url("https://maps.example.org/data")
+        with patch(
+            "backend.src.document_screening.tools.lpa_client.socket.getaddrinfo",
+            side_effect=socket.gaierror("not found"),
+        ), self.assertRaisesRegex(ValueError, "Cannot resolve"):
+            self.client._check_map_url("https://maps.example.org/data")
+
+    def test_map_requests_reject_cross_host_redirects_and_external_posts(self):
+        with patch.object(self.client.session, "request", return_value=response(
+            "", status=302, headers={"Location": "https://maps.example.org/data"},
+        )) as request:
+            with self.assertRaisesRegex(ValueError, "map redirect"):
+                self.client._request("GET", BASE_URL, map_request=True)
+            self.assertEqual(request.call_count, 1)
+        with patch(
+            "backend.src.document_screening.tools.lpa_client.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+        ), self.assertRaisesRegex(ValueError, "must use GET"):
+            self.client._request("POST", "https://maps.example.org/data", map_request=True)
+
+    def test_unsupported_arcgis_configuration_still_falls_back_to_wfs(self):
+        with patch.object(
+            self.client, "_get_tab",
+            return_value=(BeautifulSoup(ARCGIS_MAP_PAGE, "html.parser"), BASE_URL),
+        ), patch.object(self.client.session, "request", side_effect=[
+            response(""), response(json.dumps({"unsupported": True})),
+            response(WFS_DIRECT_POLYGON),
+        ]) as request:
+            result = self.client.get_coordinates("KEY", reference=REFERENCE)
+        self.assertEqual(result, {"polygon": [[[100, 200], [300, 400], [100, 200]]]})
+        self.assertEqual(request.call_args.args[1], "https://planning.test/PAM/LIVE/MapServer")
+
     def test_get_coordinates_warns_and_selects_largest_arcgis_outer_ring(self):
         map_url = BASE_URL + "applicationDetails.do?activeTab=map&keyVal=KEY"
         largest_outer = [[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]
@@ -879,6 +1023,40 @@ class PublicAccessClientTests(unittest.TestCase):
                     "KEY", "https://other.test/PAM/LIVE/MapServer"
                 )
         request.assert_not_called()
+
+
+@unittest.skipUnless(
+    os.environ.get("RUN_LPA_LIVE_TESTS") == "1",
+    "Set RUN_LPA_LIVE_TESTS=1 to query the real planning portals.",
+)
+class PublicAccessLiveTests(unittest.TestCase):
+    def test_real_applications_return_polygon_in_existing_format(self):
+        applications = (
+            ("https://planning.eastdevon.gov.uk/online-applications/", "26/0652/FUL"),
+            ("https://planningpublicaccess.southampton.gov.uk/online-applications/", "25/01506/FUL"),
+            ("https://planning.dacorum.gov.uk/publicaccess/", "26/01765/OUT"),
+        )
+        for base_url, reference in applications:
+            with self.subTest(portal=base_url, reference=reference):
+                client = PublicAccessClient(base_url, timeout=30)
+                try:
+                    keyval = client.search(reference)
+                    result = client.get_coordinates(keyval, reference=reference)
+                finally:
+                    client.close()
+                self.assertEqual(set(result), {"polygon"})
+                self.assertIsInstance(result["polygon"], list)
+                self.assertEqual(len(result["polygon"]), 1)
+                ring = result["polygon"][0]
+                self.assertIsInstance(ring, list)
+                self.assertGreaterEqual(len(ring), 4)
+                for point in ring:
+                    self.assertIsInstance(point, list)
+                    self.assertEqual(len(point), 2)
+                    for coordinate in point:
+                        self.assertIn(type(coordinate), (int, float))
+                        self.assertTrue(math.isfinite(coordinate))
+                print(f"{reference}: {keyval}, one polygon ring with {len(ring)} points", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,12 @@
 """Sequential client for Idox Public Access application pages and documents."""
 
+import ipaddress
 import json
 import logging
 import math
 import os
 import re
+import socket
 import warnings
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -123,6 +125,25 @@ class PublicAccessClient:
 			raise ValueError("Refusing a URL outside the configured Public Access host.")
 		return url
 
+	def _check_map_url(self, url):
+		target = urlsplit(url)
+		if target.netloc.lower() == urlsplit(self.base_url).netloc.lower():
+			return self._check_same_host(url)
+		if (target.scheme != "https" or not target.hostname
+				or target.username or target.password or target.port not in (None, 443)):
+			raise ValueError("External map URLs must use public HTTPS without credentials.")
+		try:
+			addresses = socket.getaddrinfo(target.hostname, 443, type=socket.SOCK_STREAM)
+		except socket.gaierror as error:
+			raise ValueError(f"Cannot resolve external map host {target.hostname!r}.") from error
+		if not addresses or any(
+			not ipaddress.ip_address(address[4][0]).is_global
+			or ipaddress.ip_address(address[4][0]).is_multicast
+			for address in addresses
+		):
+			raise ValueError("External map URLs must resolve only to public addresses.")
+		return url
+
 	def _rate_limit_wait(self, response, *, refresh=False):
 		retry_after = response.headers.get("Retry-After")
 		if retry_after is not None:
@@ -164,20 +185,31 @@ class PublicAccessClient:
 		self._request_interval = self._base_request_interval
 		self._has_requested = False
 
-	def _request(self, method, url, *, document_download=False, **kwargs):
+	def _request(self, method, url, *, document_download=False, map_request=False, **kwargs):
+		check_url = self._check_map_url if map_request else self._check_same_host
+		map_host = urlsplit(url).netloc.lower()
 		session_refreshes = 0
 		for _redirect in range(self.session.max_redirects + 1):
-			self._check_same_host(url)
+			check_url(url)
+			external_map = map_request and map_host != urlsplit(self.base_url).netloc.lower()
+			if external_map and method != "GET":
+				raise ValueError("External map requests must use GET.")
 			wait = self._request_interval if self._has_requested else 0
 			attempt = 0
 			while True:
 				if wait:
 					sleep(wait)
 				self._has_requested = True
-				response = self.session.request(
-					method, url, timeout=self.timeout, allow_redirects=False, **kwargs
-				)
-				if response.status_code == 429 and self._refresh_session_on_429 and not document_download:
+				if external_map:
+					with self._new_session() as map_session:
+						response = map_session.request(
+							method, url, timeout=self.timeout, allow_redirects=False, **kwargs
+						)
+				else:
+					response = self.session.request(
+						method, url, timeout=self.timeout, allow_redirects=False, **kwargs
+					)
+				if response.status_code == 429 and self._refresh_session_on_429 and not document_download and not external_map:
 					if session_refreshes >= self._max_session_refreshes:
 						raise requests.HTTPError(
 							f"HTTP 429 persists after {session_refreshes} session refreshes.",
@@ -197,10 +229,14 @@ class PublicAccessClient:
 				response.close()
 				attempt += 1
 			response.raise_for_status()
-			self._check_same_host(response.url)
+			check_url(response.url)
 			if not response.is_redirect:
 				return response
-			url = self._check_same_host(urljoin(response.url, response.headers["Location"]))
+			url = urljoin(response.url, response.headers["Location"])
+			if map_request and urlsplit(url).netloc.lower() != map_host:
+				response.close()
+				raise ValueError("Refusing a map redirect to a different host.")
+			check_url(url)
 			if response.status_code == 303 or (
 				response.status_code in (301, 302) and method == "POST"
 			):
@@ -376,7 +412,7 @@ class PublicAccessClient:
 		map_page, page_url = self._get_tab(keyval, "map")
 		map_form = map_page.select_one("form#mapForm")
 		if map_form is not None:
-			experience_url = self._check_same_host(
+			map_app_url = self._check_same_host(
 				urljoin(page_url, map_form.get("action") or page_url)
 			)
 			form_values = [
@@ -388,7 +424,7 @@ class PublicAccessClient:
 				raise RuntimeError("The application map form has a different application key.")
 			self._request(
 				"POST",
-				experience_url,
+				map_app_url,
 				data=form_values,
 				headers={"Origin": self._origin, "Referer": page_url},
 			)
@@ -396,35 +432,41 @@ class PublicAccessClient:
 			map_frame = map_page.select_one("iframe[src]")
 			if map_frame is None:
 				raise RuntimeError("The application map page has no embedded map form or URL.")
-			experience_url = self._check_same_host(
+			map_app_url = self._check_same_host(
 				urljoin(page_url, map_frame["src"])
 			)
-		app_item_id = parse_qs(urlsplit(experience_url).query).get("id", [None])[0]
+		app_item_id = parse_qs(urlsplit(map_app_url).query).get("id", [None])[0]
 		if not app_item_id:
-			raise RuntimeError("The embedded map URL has no Experience Builder item ID.")
+			raise RuntimeError("The embedded map URL has no ArcGIS application item ID.")
 
-		portal_url = f"{self._origin}/portal"
+		app_parts = urlsplit(map_app_url)
+		if "/apps/" not in app_parts.path:
+			raise RuntimeError("The embedded map URL has no ArcGIS portal path.")
+		portal_url = f"{app_parts.scheme}://{app_parts.netloc}{app_parts.path.split('/apps/', 1)[0]}"
 		app_data_url = f"{portal_url}/sharing/rest/content/items/{app_item_id}/data"
 		app_data = self._request(
 			"GET",
 			app_data_url,
 			params={"f": "json"},
-			headers={"Referer": experience_url},
+			headers={"Referer": map_app_url},
 		).json()
-		if not isinstance(app_data, dict) or not isinstance(app_data.get("dataSources"), dict):
+		if not isinstance(app_data, dict):
 			raise RuntimeError("The embedded map returned invalid application configuration.")
-		web_map = next(
-			(
-				source for source in app_data["dataSources"].values()
-				if isinstance(source, dict)
-				if source.get("type") == "WEB_MAP" and source.get("itemId")
-			),
-			None,
-		)
-		if web_map is None:
-			raise RuntimeError("The embedded map has no configured web map.")
+		if isinstance(app_data.get("dataSources"), dict):
+			web_map = next(
+				(
+					source for source in app_data["dataSources"].values()
+					if isinstance(source, dict)
+					if source.get("type") == "WEB_MAP" and source.get("itemId")
+				),
+				None,
+			)
+		else:
+			web_map = app_data.get("map")
+		if not isinstance(web_map, dict) or not web_map.get("itemId"):
+			raise RuntimeError("The embedded map has no supported configured web map.")
 
-		portal_url = self._check_same_host(web_map.get("portalUrl") or portal_url)
+		portal_url = self._check_map_url(web_map.get("portalUrl") or portal_url)
 		web_map_data_url = (
 			f"{portal_url.rstrip('/')}/sharing/rest/content/items/"
 			f"{web_map['itemId']}/data"
@@ -433,7 +475,8 @@ class PublicAccessClient:
 			"GET",
 			web_map_data_url,
 			params={"f": "json"},
-			headers={"Referer": experience_url},
+			headers={"Referer": map_app_url},
+			map_request=True,
 		).json()
 		if not isinstance(web_map_data, dict) or not isinstance(
 			web_map_data.get("operationalLayers"), list
@@ -451,10 +494,10 @@ class PublicAccessClient:
 		if polygon_layer is None:
 			raise RuntimeError("The embedded web map has no application polygon layer.")
 
-		layer_url = self._check_same_host(polygon_layer["url"])
+		layer_url = self._check_map_url(polygon_layer["url"])
 		if not re.search(r"/FeatureServer/\d+/?$", urlsplit(layer_url).path):
 			raise RuntimeError("The application polygon layer is not an ArcGIS feature layer.")
-		return layer_url, experience_url
+		return layer_url, map_app_url
 
 	def _arcgis_coordinates(self, layer_url, keyval, reference, referer=None):
 		query_url = layer_url.rstrip("/") + "/query"
@@ -471,6 +514,7 @@ class PublicAccessClient:
 				"f": "json",
 			},
 			headers=headers,
+			map_request=True,
 		)
 		result = response.json()
 		if not isinstance(result, dict):
