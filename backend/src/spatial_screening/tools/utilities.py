@@ -11,6 +11,7 @@ import requests
 import yaml
 
 from backend.src.utilities.http import create_system_trust_session
+from backend.src.utilities.llm_json_parser import parse_llm_json
 
 _IRZ_CODE_TABLE_PATH = (
     Path(__file__).resolve().parents[4] / "data" / "irz_code_table.csv"
@@ -223,22 +224,10 @@ def parse_irz_category_answers(response, categories):
     if not isinstance(response, str):
         raise TypeError("The IRZ category response must be text.")
 
-    content = response.strip()
-    if content.startswith("```") and content.endswith("```"):
-        lines = content.splitlines()
-        if (
-            len(lines) >= 3
-            and lines[0].strip().casefold() in {"```", "```json"}
-            and lines[-1].strip() == "```"
-        ):
-            content = "\n".join(lines[1:-1]).strip()
     try:
-        result = json.loads(content)
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            "IRZ category response is not valid JSON "
-            f"(line {error.lineno}, column {error.colno}): {error.msg}."
-        ) from error
+        result = parse_llm_json(response)
+    except ValueError as error:
+        raise ValueError(f"IRZ category response is not valid JSON: {error}") from error
 
     if not isinstance(result, dict) or set(result) != {"answers"}:
         raise ValueError("IRZ category response must contain only an 'answers' array.")

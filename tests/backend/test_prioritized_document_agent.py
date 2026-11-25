@@ -153,8 +153,10 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         }]
         parsed = _parse_prioritization(json.dumps({"documents": uncertain}), ["11"])
         self.assertEqual(parsed[0]["priority"], "must")
+        repaired = "Result: " + json.dumps({"documents": uncertain})[:-1] + ",}"
+        self.assertEqual(_parse_prioritization(repaired, ["11"]), parsed)
         with self.assertRaisesRegex(ValueError, "missing IDs"):
-            _parse_prioritization(json.dumps({"documents": uncertain}), ["11", "12"])
+            _parse_prioritization(repaired, ["11", "12"])
 
     def test_rank_download_extract_and_screen_only_must_documents(self):
         config_path = self._write_config(

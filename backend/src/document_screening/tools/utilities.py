@@ -1,11 +1,12 @@
 """Small utilities for document-screening outputs."""
 
-import json
 import math
 import re
 from pathlib import Path
 
 import yaml
+
+from backend.src.utilities.llm_json_parser import parse_llm_json
 
 
 _DOCUMENT_FINDING_KEYS = {
@@ -79,19 +80,10 @@ def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
     if not isinstance(response, str):
         raise TypeError("The prioritization response must be text.")
 
-    content = response.strip()
-    if content.startswith("```") and content.endswith("```"):
-        lines = content.splitlines()
-        if len(lines) >= 3 and lines[0].strip().casefold() in {"```", "```json"} and lines[-1].strip() == "```":
-            content = "\n".join(lines[1:-1]).strip()
-
     try:
-        result = json.loads(content)
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            f"Prioritization response is not valid JSON (line {error.lineno}, "
-            f"column {error.colno}): {error.msg}."
-        ) from error
+        result = parse_llm_json(response)
+    except ValueError as error:
+        raise ValueError(f"Prioritization response is not valid JSON: {error}") from error
     if not isinstance(result, dict) or set(result) != {"documents"}:
         raise ValueError("Prioritization response must contain only a 'documents' array.")
     records = result["documents"]
@@ -272,27 +264,14 @@ def _validate_signal(value: object, label: str) -> None:
 
 
 def parse_document_findings(response: str) -> dict[str, object]:
-    """Parse the prompt's JSON object, allowing one enclosing JSON code fence."""
+    """Parse and validate the prompt's JSON object, repairing it if needed."""
     if not isinstance(response, str):
         raise TypeError("The model response must be text.")
 
-    content = response.strip()
-    if content.startswith("```") and content.endswith("```"):
-        lines = content.splitlines()
-        if (
-            len(lines) >= 3
-            and lines[0].strip().casefold() in {"```", "```json"}
-            and lines[-1].strip() == "```"
-        ):
-            content = "\n".join(lines[1:-1]).strip()
-
     try:
-        findings = json.loads(content)
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            "Model response is not valid JSON "
-            f"(line {error.lineno}, column {error.colno}): {error.msg}."
-        ) from error
+        findings = parse_llm_json(response)
+    except ValueError as error:
+        raise ValueError(f"Model response is not valid JSON: {error}") from error
 
     if not isinstance(findings, dict):
         raise ValueError("Model response must be a JSON object.")

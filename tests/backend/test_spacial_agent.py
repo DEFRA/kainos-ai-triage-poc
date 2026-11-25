@@ -42,7 +42,10 @@ class SpatialAgentTests(unittest.TestCase):
                 "https://irz.test/21101"
             )
             intelligence = intelligence_class.return_value.__enter__.return_value
-            intelligence.generate.side_effect = ["Answer one", "Answer two"]
+            intelligence.generate.side_effect = [
+                'Result: {"answer": "Answer one",}',
+                '{"answer": "Answer two"}',
+            ]
 
             result = run_spatial_screening(
                 polygon,
@@ -57,8 +60,8 @@ class SpatialAgentTests(unittest.TestCase):
         self.assertEqual(
             result["answered_questions"],
             [
-                {"question": questions[0], "answer": "Answer one"},
-                {"question": questions[1], "answer": "Answer two"},
+                {"question": questions[0], "answer": '{"answer": "Answer one"}'},
+                {"question": questions[1], "answer": '{"answer": "Answer two"}'},
             ],
         )
         self.assertEqual(intelligence.generate.call_count, 2)

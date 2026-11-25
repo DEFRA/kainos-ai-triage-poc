@@ -18,12 +18,18 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
             parse_document_findings("```json\n" + json.dumps(findings) + "\n```"),
             findings,
         )
+        self.assertEqual(
+            parse_document_findings("Result: " + json.dumps(findings)[:-1] + ",}"),
+            findings,
+        )
 
     def test_rejects_non_object_and_incomplete_document_findings(self):
         with self.assertRaisesRegex(ValueError, "JSON object"):
             parse_document_findings("[]")
         with self.assertRaisesRegex(ValueError, "invalid top-level structure"):
             parse_document_findings('{"completed_assessments": []}')
+        with self.assertRaisesRegex(ValueError, "invalid top-level structure"):
+            parse_document_findings('Result: {"completed_assessments": [],}')
         with self.assertRaisesRegex(ValueError, "not valid JSON"):
             parse_document_findings("not JSON")
 

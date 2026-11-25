@@ -3,6 +3,7 @@ import unittest
 from backend.src.spatial_screening.tools.utilities import (
 	check_strategic_irz_codes,
 	map_internal_irz_codes,
+	parse_irz_category_answers,
 	parse_internal_irz_codes,
 )
 
@@ -24,6 +25,11 @@ INTERNAL_LINK_WITH_MULTIPLE_OPTIONS = (
 
 
 class InternalIRZCodeUtilityTests(unittest.TestCase):
+	def test_repairs_and_validates_irz_model_json(self):
+		self.assertEqual(parse_irz_category_answers('Result: {"answers": [],}', []), [])
+		with self.assertRaisesRegex(ValueError, "answers.*array"):
+			parse_irz_category_answers('Result: {"answers": "invalid",}', [])
+
 	def test_parse_internal_link_extracts_each_record(self):
 		records = parse_internal_irz_codes(INTERNAL_LINK_WITH_THREE_RECORDS)
 
