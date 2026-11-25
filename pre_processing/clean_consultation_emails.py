@@ -7,6 +7,7 @@ Run from the project root: uv run python pre_processing/clean_consultation_email
 import csv
 import hashlib
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from email import policy
@@ -30,6 +31,17 @@ DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".rtf"}
 NON_EMAIL_EXTENSIONS = DOCUMENT_EXTENSIONS | {".zip", ".xlsx", ".xls", ".csv", ".txt", ".png", ".jpg", ".jpeg", ".gif"}
 LOG_FIELDS = ["consultation_id", "status", "source", "kept", "removed", "note"]
 EXCLUDED_NAME_TERMS = ("checklist", "response", "annex")
+NON_IDOX_CONSULTATIONS = dict.fromkeys((
+    "537112", "537968", "538136", "538342", "538652", "538942", "538952",
+    "539003", "539675", "539693", "539696", "539832", "540112", "540138",
+    "540221", "540247", "540705", "540863", "541006", "541107", "542678",
+    "542844", "543004", "543175", "543864", "544073", "544439", "544939",
+    "545677", "546448", "546558", "546660", "546707", "546767", "546851",
+    "547279", "547758", "547798", "548298", "548806", "549600", "550096",
+    "550320", "551172", "551939", "552149", "552365", "552524", "553039",
+    "553060", "553082", "553257", "555002", "556227", "556309", "557602",
+    "557633", "557879", "558808", "559020", "559551", "559556", "560400",
+), "skip")
 QC_PATTERN = re.compile(r"(?<![a-z])qc(?![a-z])", re.IGNORECASE)
 QC_BODY_PATTERN = re.compile(
     r"(?im)^\s*(?:(?:hi|hello)[,\s]+)?qc\s+(?:complete|completed)\b"
@@ -357,7 +369,21 @@ def write_log(rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def main() -> None:
+def remove_non_idox(rows: list[dict[str, str]]) -> None:
+    for case_id in NON_IDOX_CONSULTATIONS:
+        output_folder = OUTPUT_ROOT / case_id
+        if not output_folder.is_dir() or output_folder.is_symlink():
+            continue
+        shutil.rmtree(output_folder)
+        matching_rows = [row for row in rows if row["consultation_id"] == case_id]
+        if not matching_rows:
+            rows.append(make_row(case_id, "skipped", note="removed: non-Idox website"))
+        for row in matching_rows:
+            row["status"] = "skipped"
+            row["note"] = "; ".join(filter(None, (row["note"], "removed: non-Idox website")))
+
+
+def main(remove_non_idox_enabled: bool = False) -> None:
     rows = []
     qc_groups: dict[str, list[tuple[str, EmailMessage]]] = {}
     for folder in sorted(path for path in INPUT_ROOT.iterdir() if path.is_dir() and not path.name.startswith(".")):
@@ -375,6 +401,8 @@ def main() -> None:
         process_qc_group(case_id, group)
         for case_id, group in sorted(qc_groups.items())
     )
+    if remove_non_idox_enabled:
+        remove_non_idox(rows)
     write_log(rows)
     counts = {
         status: sum(row["status"] == status for row in rows)
@@ -385,9 +413,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Set to True to remove cleaned consultations with non-Idox websites
+    remove_non_idox_enabled = True
     # Optional: input and output folders, e.g. data/temp/necessary data/temp/necessary_clean
     if len(sys.argv) == 3:
         INPUT_ROOT = Path(sys.argv[1]).resolve()
         OUTPUT_ROOT = Path(sys.argv[2]).resolve()
         LOG_PATH = OUTPUT_ROOT / "preprocessing_log.csv"
-    main()
+    main(remove_non_idox_enabled=remove_non_idox_enabled)

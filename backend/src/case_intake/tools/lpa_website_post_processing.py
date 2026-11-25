@@ -76,10 +76,16 @@ def deterministic_post_processing_lpa_website(
         retain the hostname-matched rows for the name comparison in step 3.
 
     3. Compare the extracted LPA name with the spreadsheet's lpa_name (old LPA name) and
-    assigned_current_lpa_name (current LPA name due to any reorganisations) columns.
-    Case, spaces and most punctuation are ignored, 
-        e.g. 'Adur Worthing' (assigned_current_lpa_name) matches 'AdurWorthing' (lpa_name).
-    If the extracted LPA name matches spreadsheet rows, keep only those rows.
+        assigned_current_lpa_name (current LPA name due to any reorganisations) columns.
+    Case, spaces and most punctuation are ignored during normalisation. For example,
+        an extracted name of 'Adur Worthing' matches 'AdurWorthing' because both
+        normalise to 'adurworthing'.
+    The normalised name must match either column exactly; words are not removed
+        and fuzzy matching is not used.
+    If the name matches any spreadsheet rows, keep only those that also passed
+        the website checks in step 2. If there are no name matches anywhere in the
+        spreadsheet, leave the website candidates unchanged. If name matches exist
+        but none are website candidates, retain the original website with a warning.
 
     4. Replace the website only if the remaining rows agree on one URL.
     Otherwise, retain the original value and report a warning.

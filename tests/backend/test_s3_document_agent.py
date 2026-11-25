@@ -139,6 +139,9 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(stored_result, {key: value for key, value in result.items() if key != "storage"})
         self.assertEqual(result["final_output"]["polygon"]["polygon_source"], "document_coordinates")
         self.assertEqual(result["sources"][0]["pages"][0]["attachment_number"], 1)
+        self.assertEqual(result["sources"][0]["saved_as"], "11.pdf")
+        self.assertEqual(result["sources"][0]["s3"], {"bucket": "bucket", "key": "case/run/11.pdf"})
+        self.assertEqual(stored_result["sources"][0]["s3"], result["sources"][0]["s3"])
         self.assertEqual(result["storage"]["objects"]["11.pdf"]["version"], "version-1")
         self.assertEqual(self.s3.put_object.call_args.kwargs["Key"], "case/run/KEY-prioritized-document-screening.json")
         self.assertNotIn("https://example.test/11.pdf", self.llm.generate.call_args.args[0])
@@ -169,6 +172,10 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
         self.assertIn("11.docx", result["storage"]["objects"])
         self.assertIn("12.xlsx", result["storage"]["objects"])
+        self.assertEqual(
+            [(source["saved_as"], source["s3"]["key"]) for source in result["sources"]],
+            [("11.docx", "case/run/11.docx"), ("12.xlsx", "case/run/12.xlsx")],
+        )
         self.assertTrue(self.objects["case/run/11.docx"].startswith(b"PK"))
         self.assertTrue(self.objects["case/run/12.xlsx"].startswith(b"PK"))
 
@@ -250,7 +257,10 @@ class S3DocumentAgentTests(unittest.TestCase):
             local_result = run_prioritized_document_screening(
                 "25/123", "https://example.test/", "model.yaml", local_directory,
             )
-        self.assertEqual(local_result, {key: value for key, value in s3_result.items() if key != "storage"})
+        s3_comparison = {key: copy.deepcopy(value) for key, value in s3_result.items() if key != "storage"}
+        for source in s3_comparison["sources"]:
+            source.pop("s3")
+        self.assertEqual(local_result, s3_comparison)
 
     def test_ranking_failure_uploads_metadata_and_stops_before_download(self):
         self.llm.generate.side_effect = RuntimeError("ranking failed")
