@@ -222,6 +222,24 @@ class S3SpatialAgentTests(unittest.TestCase):
 
 		self.s3.put_object.assert_not_called()
 
+	def test_invalid_answer_response_is_saved_before_validation_error_is_raised(self):
+		llm, _intersect, _irz = self._patch_pipeline(S3_MODULE)
+		invalid_response = json.loads(self.response)
+		invalid_response["answers"][0]["unexpected"] = "extra field"
+		llm.generate.return_value = json.dumps(invalid_response)
+
+		with self.assertRaisesRegex(
+			ValueError,
+			"Each IRZ answer must contain the required answer fields only.*"
+			"s3://screening-bucket/case-1/run-1/spatial-screening-response.txt",
+		):
+			self._run()
+
+		self.s3.put_object.assert_called_once()
+		kwargs = self.s3.put_object.call_args.kwargs
+		self.assertEqual(kwargs["Key"], "case-1/run-1/spatial-screening-response.txt")
+		self.assertEqual(kwargs["Body"], json.dumps(invalid_response).encode("utf-8"))
+
 	def test_module_does_not_import_irz_code_agent(self):
 		source_path = Path(irz_code_agent.__file__).with_name("s3_spatial_agent.py")
 		tree = ast.parse(source_path.read_text(encoding="utf-8"))

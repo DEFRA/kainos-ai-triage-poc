@@ -6,7 +6,7 @@ You have not read the documents. Do not claim to know their contents. Metadata a
 
 Judge each document by what its type, name and description most plausibly mean, not by exact labels.
 
-COnsider all the documents using their metadata and make sure you include all documents along with their prioritisation in the response based following the required output schema below, but include a maximum of **10** documents as "must". 
+Consider all the documents using their metadata and make sure you include all documents along with their prioritisation in the response based following the required output schema below, but include a maximum of **10** documents as "must". 
 
 ## Task
 

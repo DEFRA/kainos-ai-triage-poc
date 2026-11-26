@@ -3,7 +3,11 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from backend.src.utilities.llm_client import LLMClient
-from backend.src.utilities.s3_utils import create_s3_client, upload_json_to_s3
+from backend.src.utilities.s3_utils import (
+	create_s3_client,
+	put_object_with_metadata,
+	upload_json_to_s3,
+)
 from ..tools.geospatial import intersect_polygon_with_layer
 from ..tools.internal_irz_client import InternalIRZClient
 from ..tools.utilities import (
@@ -152,7 +156,24 @@ def run_s3_spatial_screening(
 	print("[spatial screening] Completed IRZ category answer generation.")
 
 	print("[spatial screening] Starting IRZ answer validation.")
-	answers = parse_irz_category_answers(response, categories)
+	try:
+		answers = parse_irz_category_answers(response, categories)
+	except ValueError as error:
+		response_name = "spatial-screening-response.txt"
+		response_key = f"{prefix}/{response_name}"
+		try:
+			put_object_with_metadata(
+				s3_client, bucket, response_key, response.encode("utf-8"),
+			)
+		except Exception as upload_error:
+			raise ExceptionGroup(
+				"Spatial answer validation failed and its raw response could not be uploaded.",
+				[error, upload_error],
+			) from None
+		raise ValueError(
+			f"Could not use the spatial model response: {error} "
+			f"Raw response artifact: s3://{bucket}/{response_key}."
+		) from error
 	human_review_required = apply_human_review_flags(answers, human_review_threshold)
 	document_screening = context.get("document_screening")
 	if isinstance(document_screening, dict):

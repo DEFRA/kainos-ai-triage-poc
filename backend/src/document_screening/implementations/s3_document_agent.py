@@ -132,12 +132,28 @@ def run_s3_document_screening(
                         if isinstance(ranking_client.last_usage, dict) else None
                     )
                 prioritization = parse_prioritization(ranking_response, document_ids)
+                missing_prioritization_ids = [
+                    item["id"] for item in prioritization
+                    if item.get("missing_from_response")
+                ]
+                if missing_prioritization_ids:
+                    metadata["prioritization_warnings"] = [{
+                        "type": "missing_document_prioritizations",
+                        "document_ids": missing_prioritization_ids,
+                        "message": "Missing model priorities defaulted to maybe; these documents were not selected unless include_maybe is true.",
+                    }]
+                    print(
+                        "[document screening] WARNING: Missing prioritization for "
+                        f"{len(missing_prioritization_ids)} documents; defaulted to maybe."
+                    )
                 prioritization_by_id = {item["id"]: item for item in prioritization}
                 for document in documents:
                     decision = prioritization_by_id[str(document["id"])]
                     document["priority"] = decision["priority"]
                     document["priority_reason"] = decision["reason"]
                     document["priority_uncertain"] = decision["uncertain"]
+                    if decision.get("missing_from_response"):
+                        document["priority_missing_from_response"] = True
                     document["downloaded"] = False
 
                 metadata_path = output_directory / f"{application_key}-metadata.json"

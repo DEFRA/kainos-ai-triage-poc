@@ -1,12 +1,13 @@
 document_screening:
   max_concurrent_downloads: 5
   include_maybe: false
+  include_attachments: false
   default_polygon_area_square_metres: 50000
 
 lpa:
   request_interval_seconds: 0
-  retry_increment_seconds: 0
-  max_retries: 0
+  retry_increment_seconds: 2
+  max_retries: 3
   max_wait_seconds: 60
   refresh_session_on_429: true
   session_refresh_wait_seconds: 60

@@ -1,7 +1,7 @@
 model_configs:
-  case_intake: null
-  document_screening: null
-  spatial_screening: null
+  case_intake: environment/model_configs/bedrock-aws-nova-pro.yaml
+  document_screening: environment/model_configs/bedrock-aws-gemma-3-27b.yaml
+  spatial_screening: environment/model_configs/bedrock-aws-gpt-oss-120b.yaml
 
 required_fields:
   case_intake:

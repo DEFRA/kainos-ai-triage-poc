@@ -115,6 +115,20 @@ def run_prioritized_document_screening(
             provider = ranking_client.config.provider
             model = ranking_client.config.model
         prioritization = _parse_prioritization(ranking_response, document_ids)
+        missing_prioritization_ids = [
+            item["id"] for item in prioritization
+            if item.get("missing_from_response")
+        ]
+        if missing_prioritization_ids:
+            metadata["prioritization_warnings"] = [{
+                "type": "missing_document_prioritizations",
+                "document_ids": missing_prioritization_ids,
+                "message": "Missing model priorities defaulted to maybe; these documents were not selected unless include_maybe is true.",
+            }]
+            print(
+                "[document screening] WARNING: Missing prioritization for "
+                f"{len(missing_prioritization_ids)} documents; defaulted to maybe."
+            )
         priority_counts = {
             priority: sum(item["priority"] == priority for item in prioritization)
             for priority in sorted(_PRIORITIES)
@@ -126,6 +140,8 @@ def run_prioritized_document_screening(
             document["priority"] = decision["priority"]
             document["priority_reason"] = decision["reason"]
             document["priority_uncertain"] = decision["uncertain"]
+            if decision.get("missing_from_response"):
+                document["priority_missing_from_response"] = True
             document["downloaded"] = False
 
         _write_metadata(metadata, output_directory, application_key)

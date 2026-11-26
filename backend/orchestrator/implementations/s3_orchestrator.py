@@ -56,7 +56,7 @@ def run_s3_consultation(
     email_file_path: Union[str, Path],
     consultation_id: str,
     intake_prompt_path: Union[str, Path],
-    model_config_path: Union[str, Path],
+    model_config_path: Optional[Union[str, Path]] = None,
     bucket: str,
     prefix: str,
     implementation_config_path: Optional[Union[str, Path]] = None,

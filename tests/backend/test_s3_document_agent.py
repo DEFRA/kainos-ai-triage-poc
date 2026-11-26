@@ -336,14 +336,40 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
         self.assertTrue(any("unsupported file format .doc" in item for item in result["document_findings"]["limitations"]))
 
-    def test_include_maybe_and_uncertain_skip_are_selected(self):
+    def test_include_maybe_preserves_uncertain_skip(self):
         config_path = self.root / "config.yaml"
         config_path.write_text("document_screening:\n  include_maybe: true\nlpa: {}\n", encoding="utf-8")
         self.ranking[2]["uncertain"] = True
         result = self.run_agent(implementation_config_path=config_path)
         self.client_factory.assert_called_once_with()
-        self.assertEqual(self.lpa.download_documents_concurrently.call_args.args[3], ["11", "12", "13"])
-        self.assertEqual(result["prioritization"][2]["priority"], "must")
+        self.assertEqual(self.lpa.download_documents_concurrently.call_args.args[3], ["11", "12"])
+        self.assertEqual(result["prioritization"][2]["priority"], "skip")
+        self.assertTrue(result["prioritization"][2]["uncertain"])
+
+    def test_missing_prioritization_is_logged_and_defaults_to_maybe(self):
+        self.llm.generate.side_effect = [
+            json.dumps({"documents": self.ranking[:2]}),
+            json.dumps(self.findings),
+        ]
+
+        result = self.run_agent(s3_client=self.s3)
+
+        self.assertEqual(
+            self.lpa.download_documents_concurrently.call_args.args[3], ["11"],
+        )
+        missing_document = result["metadata"]["documents"][2]
+        self.assertEqual(missing_document["priority"], "maybe")
+        self.assertTrue(missing_document["priority_uncertain"])
+        self.assertTrue(missing_document["priority_missing_from_response"])
+        self.assertEqual(
+            result["metadata"]["prioritization_warnings"][0]["document_ids"],
+            ["13"],
+        )
+        stored_metadata = json.loads(self.objects["case/run/KEY-metadata.json"])
+        self.assertEqual(
+            stored_metadata["prioritization_warnings"],
+            result["metadata"]["prioritization_warnings"],
+        )
 
     def test_download_failure_is_recorded_as_limitation(self):
         def fail_download(application_key, metadata, directory, document_ids, *, max_workers):

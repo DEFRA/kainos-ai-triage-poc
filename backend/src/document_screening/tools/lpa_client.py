@@ -200,15 +200,43 @@ class PublicAccessClient:
 				if wait:
 					sleep(wait)
 				self._has_requested = True
-				if external_map:
-					with self._new_session() as map_session:
-						response = map_session.request(
+				try:
+					if external_map:
+						with self._new_session() as map_session:
+							response = map_session.request(
+								method, url, timeout=self.timeout, allow_redirects=False, **kwargs
+							)
+					else:
+						response = self.session.request(
 							method, url, timeout=self.timeout, allow_redirects=False, **kwargs
 						)
-				else:
-					response = self.session.request(
-						method, url, timeout=self.timeout, allow_redirects=False, **kwargs
+				except requests.exceptions.SSLError:
+					raise
+				except (requests.ConnectionError, requests.Timeout) as error:
+					if attempt >= self._max_retries:
+						raise
+					attempt += 1
+					wait = self._retry_increment * attempt
+					if wait > self._max_wait:
+						raise
+					_LOGGER.warning(
+						"LPA request failed with %s; retrying attempt %s/%s in %gs.",
+						type(error).__name__, attempt, self._max_retries, wait,
 					)
+					continue
+				if response.status_code in (500, 502, 503, 504):
+					if attempt >= self._max_retries:
+						break
+					attempt += 1
+					wait = self._retry_increment * attempt
+					if wait > self._max_wait:
+						break
+					_LOGGER.warning(
+						"LPA returned HTTP %s; retrying attempt %s/%s in %gs.",
+						response.status_code, attempt, self._max_retries, wait,
+					)
+					response.close()
+					continue
 				if response.status_code == 429 and self._refresh_session_on_429 and not document_download and not external_map:
 					if session_refreshes >= self._max_session_refreshes:
 						raise requests.HTTPError(

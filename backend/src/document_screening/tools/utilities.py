@@ -108,20 +108,24 @@ def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
             raise ValueError(f"A non-empty reason is required for document {document_id!r}.")
         by_id[document_id] = {
             "id": document_id,
-            "priority": "must" if record["uncertain"] else record["priority"],
+            "priority": record["priority"],
             "uncertain": record["uncertain"],
             "reason": record["reason"].strip(),
         }
 
-    if set(by_id) != set(expected_ids):
-        missing = sorted(set(expected_ids) - set(by_id))
-        unexpected = sorted(set(by_id) - set(expected_ids))
-        details = []
-        if missing:
-            details.append("missing IDs: " + ", ".join(missing))
-        if unexpected:
-            details.append("unexpected IDs: " + ", ".join(unexpected))
-        raise ValueError("Prioritization response does not match the metadata (" + "; ".join(details) + ").")
+    unexpected = sorted(set(by_id) - set(expected_ids))
+    if unexpected:
+        raise ValueError(
+            "Prioritization response contains unexpected IDs: " + ", ".join(unexpected) + "."
+        )
+    for document_id in sorted(set(expected_ids) - set(by_id)):
+        by_id[document_id] = {
+            "id": document_id,
+            "priority": "maybe",
+            "uncertain": True,
+            "reason": "The model returned no prioritization for this document; defaulted to maybe.",
+            "missing_from_response": True,
+        }
     return [by_id[document_id] for document_id in expected_ids]
 
 
