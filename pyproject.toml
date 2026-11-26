@@ -6,10 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.35.0",
-    "bs4>=0.0.2",
+    "beautifulsoup4>=4.15.0",
     "fiona>=1.9",
     "fastapi>=0.115,<1",
     "ipykernel>=6.31.0",
+    "json-repair>=0.64.9,<1",
     "openai>=1.55.0,<3",
     "pandas>=2.3.3",
     "pillow>=11.0.0",
@@ -21,10 +22,13 @@ dependencies = [
     "shapely>=2.0",
     "pdfplumber>=0.11.10",
     "extract-msg>=0.58.0",
-    "streamlit>=1.66.0",
+    "streamlit[pdf]>=1.66.0",
     "python-docx>=1.2.0",
     "truststore>=0.10.4,<1",
     "uvicorn>=0.34,<1",
+    "striprtf>=0.0.29,<1",
+    "psycopg[binary]>=3.3.9",
+    "openpyxl>=3.1.5",
 ]
 
 [project.scripts]
@@ -39,7 +43,8 @@ packages = [
     "backend/orchestrator",
     "backend/src/ai_triage",
     "backend/src/document_screening",
-    "backend/src/email_intake",
+    "backend/src/case_intake",
+    "backend/src/decision",
     "backend/src/spatial_screening",
     "backend/src/utilities",
 ]

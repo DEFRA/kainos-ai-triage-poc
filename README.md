@@ -6,26 +6,86 @@ The project requires Python 3.12 or newer; local development is pinned to
 Python 3.12.12. Use `uv sync` to create the project environment and install
 dependencies.
 
-## Consultation API
+## Run a consultation
 
-The synchronous FastAPI service runs intake, document screening, and spatial
-screening. Set `AI_TRIAGE_MODEL_CONFIG` to a model configuration path, then run
-the API from the repository root:
+The API currently runs case intake, document screening, spatial screening, and
+the consultation decision in order. Case intake is a placeholder that passes
+the submitted JSON through.
+The configured required fields are in
+[orchestrator.yaml](environment/configs/orchestrator.yaml); the current intake
+requires Field objects for `lpa_reference_id` and `lpa_website`, plus the seven
+case-intake signals used by the decision stage.
+
+Optional `model_configs` entries in [orchestrator.yaml](environment/configs/orchestrator.yaml)
+select separate model YAML files for `case_intake`, `document_screening`, and
+`spatial_screening`. Use absolute paths or paths relative to the repository root;
+`null` or omitted entries use the orchestrator's existing `model_config_path`.
+The local API receives case intake as input, and the decision stage is deterministic.
+
+1. Install the project with Python 3.12.12 and `uv sync`.
+2. Edit one of the model templates in `environment/model_configs/` with a real
+   model ID and endpoint or AWS region. The tracked files ending in
+   `-placeholder.yaml` are examples and are not directly runnable.
+3. Set `AI_TRIAGE_MODEL_CONFIG` to the absolute path of that model config, then
+   start the API from the repository root:
 
 ```sh
-export AI_TRIAGE_MODEL_CONFIG=environment/model_configs/your-model-config.yaml
+export AI_TRIAGE_MODEL_CONFIG="$PWD/environment/model_configs/your-model-config.yaml"
 uv run --python 3.12.12 uvicorn ai_triage.api:app --reload
 ```
 
-Submit case JSON to `POST /consultations`. The response contains the stage
-outputs, warnings, errors, and a run ID. Retrieve a saved response with
-`GET /consultations/{run_id}`. Run records and stage files are written under
-`data/runs/`. The current result structure is provisional; consultation
-classification rules and evidence fields have not yet been defined.
+4. Submit a case JSON object to `POST /consultations`, for example:
+
+```json
+{
+  "lpa_reference_id": {
+    "value": "25/03341/CDPN",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Reference from the consultation.",
+    "evidence": []
+  },
+  "lpa_website": {
+    "value": "https://planning.example.gov.uk/online-applications/",
+    "status": "stated",
+    "confidence": "high",
+    "reason": "Planning authority website.",
+    "evidence": []
+  },
+  "signals": {
+    "eia_screening": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "eia_scoping": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "conditions": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "pre_application": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "prior_approval": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "minerals_waste_existing": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []},
+    "minerals_waste_new": {"classification": "no_signal", "confidence": "high", "reason": "No signal identified.", "evidence": []}
+  }
+}
+```
+
+The response includes a `run_id`, each stage's output, and any errors. A failed
+stage stops the flow and returns the completed outputs and error details so far.
+Retrieve a saved run with `GET /consultations/{run_id}`. Run records and stage
+files are written under `backend/data/runs/<run_id>/` by default.
+
+The decision stage applies the current consultation checklist and returns a
+`necessary` or `unnecessary` classification with its checklist evidence. This
+is a PoC decision aid; it does not send a response. Runs are synchronous and
+saved to the local filesystem, so this storage is not durable across ephemeral
+deployments.
+For container deployments, install current CA certificates in the image and
+add any organization-specific roots required to reach external planning sites.
+
+The current Python package layout is under `backend/`; stage-specific
+configuration is under `environment/configs/`, and model connection settings
+are under `environment/model_configs/`.
+
+## Component references
 
 ## Synchronous LLM client
 
-The [shared LLM client](src/shared/llm_client.py) supports:
+The [LLM client](backend/src/utilities/llm_client.py) supports:
 
 - **Ollama**, using its OpenAI-compatible Chat Completions endpoint.
 - **Amazon Bedrock**, using the `bedrock-runtime` Converse API.
@@ -36,13 +96,13 @@ in a Python script or notebook using the project environment:
 ```python
 from pathlib import Path
 
-from shared.llm_client import LLMClient
+from backend.src.utilities.llm_client import LLMClient
 
 system_prompt = Path(
-  "src/spatial_screening/prompts/answer_irz_question.md"
+  "backend/src/spatial_screening/prompts/answer_irz_category.md"
 ).read_text(encoding="utf-8")
 
-with LLMClient("environment/model_configs/ollama.yaml") as client:
+with LLMClient("environment/model_configs/ollama-placeholder.yaml") as client:
     answer = client.generate(
         "Question: ...\nEvidence: ...",
         system_prompt=system_prompt,
@@ -61,19 +121,19 @@ relative paths resolve against the current working directory. Prompt loading and
 templating stay with the caller; the client accepts text with optional local
 file attachments and keeps no chat history.
 
-See [Ollama config](environment/model_configs/ollama.yaml) and
-[Bedrock config](environment/model_configs/bedrock.yaml).
+See the [Ollama template](environment/model_configs/ollama-placeholder.yaml) and
+[Bedrock template](environment/model_configs/bedrock-placeholder.yaml).
 
-| Field | Meaning |
-| --- | --- |
-| `provider` / `api_style` | Supported pairs: `ollama` / `openai`, `bedrock` / `converse`. |
-| `model` | Ollama model name, or Bedrock model/inference profile ID. |
-| `base_url` | Required for Ollama, including `/v1`; optional Bedrock runtime endpoint override. |
-| `api_key_env` | Environment variable holding an Ollama endpoint key; defaults to `OLLAMA_API_KEY`. |
-| `region` | Required AWS region for Bedrock. |
-| `aws_profile` | Optional AWS profile for Bedrock. |
-| `max_output_tokens` | Positive output token limit; defaults to 1500. Thinking may consume this budget. |
-| `thinking_level` | Optional `low`, `medium`, or `high`; see limitations below. |
+| Field                        | Meaning                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| `provider` / `api_style` | Supported pairs: `ollama` / `openai`, `bedrock` / `converse`.                |
+| `model`                    | Ollama model name, or Bedrock model/inference profile ID.                            |
+| `base_url`                 | Required for Ollama, including `/v1`; optional Bedrock runtime endpoint override.  |
+| `api_key_env`              | Environment variable holding an Ollama endpoint key; defaults to `OLLAMA_API_KEY`. |
+| `region`                   | Required AWS region for Bedrock.                                                     |
+| `aws_profile`              | Optional AWS profile for Bedrock.                                                    |
+| `max_output_tokens`        | Positive output token limit; defaults to 1500. Thinking may consume this budget.     |
+| `thinking_level`           | Optional `low`, `medium`, or `high`; see limitations below.                    |
 
 Unknown fields, invalid settings, and missing configured secrets raise errors.
 Provider SDK errors propagate with their original details. Empty responses,
@@ -87,7 +147,7 @@ Pass an ordered sequence of local file paths using `attachments`. Omitting it,
 passing `None`, or passing an empty list preserves text-only requests:
 
 ```python
-with LLMClient("environment/model_configs/ollama.yaml") as client:
+with LLMClient("environment/model_configs/ollama-placeholder.yaml") as client:
     answer = client.generate(
         "Extract the requested facts from these pages.",
         system_prompt=system_prompt,
@@ -114,8 +174,7 @@ or file/image-count limits propagate unchanged. The client does not estimate
 multimodal context usage, split requests, extract PDF text, or render PDF pages.
 Task prompts and any output parsing remain the caller's responsibility.
 
-Imports now use `from shared.llm_client import LLMClient`; the former
-screening-specific module has been removed. Existing model YAML fields,
+The LLM client is shared by the screening stages. Existing model YAML fields,
 including `api_style` and `thinking_level`, are unchanged.
 
 ### Ollama setup
@@ -165,18 +224,18 @@ Levels are not directly comparable across models. Fixed thinking budgets,
 explicit thinking-disable controls, other providers, streaming, and async
 requests are outside this initial implementation.
 
-Prompts stay under [spatial_screening/prompts](src/spatial_screening/prompts/), not in
+Prompts stay under [spatial_screening/prompts](backend/src/spatial_screening/prompts/), not in
 environment configuration. The broader [proposed structure](structure.md)
 describes future stages; this implementation uses the current source layout.
 
 ## PDF document preparation
 
-The [shared PDF parser](src/shared/document_parser.py) uses
+The [PDF parser](backend/src/utilities/document_parser.py) uses
 `pypdfium2` for PDF text extraction and page rendering, with Pillow for PNG
 encoding. It does not call an LLM, perform OCR, or orchestrate screening.
 
 ```python
-from shared.document_parser import parse_pdf
+from backend.src.utilities.document_parser import parse_pdf
 
 pages = parse_pdf("application.pdf", "rendered-pages", dpi=150)
 for page in pages:
@@ -203,7 +262,7 @@ results belong to the document agent below.
 
 ## Document screening
 
-The [original document-agent implementation](src/document_screening/implementations/document_agent.py)
+The [original document-agent implementation](backend/src/document_screening/implementations/document_agent.py)
 resolves a consultation reference, runs the LPA client's retrieval flow, prepares
 PDF pages, and submits all evidence together through `LLMClient`. Select a
 vision-capable model in the model YAML before processing PDF page images or other
@@ -260,7 +319,7 @@ rate limits.
 ```python
 from datetime import date
 
-from document_screening.implementations.document_agent import run_document_screening
+from backend.src.document_screening.implementations.document_agent import run_document_screening
 
 result = run_document_screening(
   reference="25/03341/CDPN",
@@ -284,7 +343,7 @@ and model's supported inputs. No documents/pages are silently dropped, no
 automatic splitting or model retries are added, and all evidence uses one model
 call. Council HTTP requests use the bounded 429 retries described above.
 
-The default [screening prompt](src/document_screening/prompts/screen_documents.md)
+The default [screening prompt](backend/src/document_screening/prompts/screen_documents.md)
 requests a JSON object of development and environmental evidence with source
 references rather than a final consultation decision. Pass `prompt_path` to use
 another prompt, or edit the default file. The agent parses the response as JSON
@@ -298,11 +357,11 @@ repaired or retried.
 
 ### Prioritized document screening
 
-The separate [prioritized implementation](src/document_screening/implementations/prioritized_document_agent.py)
+The separate [prioritized implementation](backend/src/document_screening/implementations/prioritized_document_agent.py)
 retrieves and saves application metadata first, asks the model to rank each
 document, downloads selected documents concurrently, then extracts and screens
 only successful downloads. The ranking prompt is
-[prioritize_documents.md](src/document_screening/prompts/prioritize_documents.md).
+[prioritize_documents.md](backend/src/document_screening/prompts/prioritize_documents.md).
 Model or invalid-ranking failures raise before downloading. Uncertain rankings
 are forced to `must`. Per-document download failures warn and are recorded in
 metadata as `downloaded: false` with a `download_error`; they do not stop other
@@ -317,7 +376,7 @@ excluded, while same-day documents are included. Documents with missing or
 unrecognized dates are retained with a warning.
 
 ```python
-from document_screening.implementations.prioritized_document_agent import (
+from backend.src.document_screening.implementations.prioritized_document_agent import (
   run_prioritized_document_screening,
 )
 
@@ -337,10 +396,10 @@ The returned dictionary retains the original LPA `metadata`, parsed
 `document_findings`, and combined `final_output`, along with source-document IDs,
 one-based page/attachment mappings, raw model response text, provider/model, and
 the prompt path. The run record is saved as
-`<application-key>-document-screening.json`; the merged stage handoff is saved
-separately as `<application-key>-final-output.json`. Existing outputs are not
-overwritten; use a fresh directory for a new run. Failures propagate and leave
-earlier files available for inspection.
+`<application-key>-prioritized-document-screening.json`; the merged stage handoff
+is saved separately as `<application-key>-prioritized-final-output.json`.
+Existing outputs are not overwritten; use a fresh directory for a new run.
+Failures propagate and leave earlier files available for inspection.
 
 `dpi` defaults to 150 for PDF rendering. Optional `context_limit` should match the
 configured model runtime context, not merely its advertised maximum. A warning
@@ -350,8 +409,157 @@ and document attachments and can underestimate actual usage. It is not a full
 multimodal context check. Provider context, image-count, and payload-size errors
 still propagate; no oversized request is silently truncated by the agent.
 
+### S3 document screening
+
+The standalone [S3 implementation](backend/src/document_screening/implementations/s3_document_agent.py)
+performs the same prioritized screening sequence and stores its generated artifacts
+in S3. It does not change the document screening selected by the API orchestrator.
+
+```python
+from backend.src.document_screening.implementations.s3_document_agent import (
+  run_s3_document_screening,
+)
+from backend.src.utilities.s3_utils import create_s3_client
+
+result = run_s3_document_screening(
+  reference="25/03341/CDPN",
+  base_url="https://planningapps.sheffield.gov.uk/online-applications/",
+  model_config_path="environment/model_configs/gemma3-12b.yaml",
+  bucket="my-consultation-bucket",
+  prefix="consultations/example/run-001",
+  s3_client=create_s3_client(region="eu-west-2", profile_name="my-profile"),
+)
+print(result["final_output"])
+print(result["storage"]["objects"])
+```
+
+The S3 client is optional; when omitted, it uses the default AWS credential chain
+and `eu-west-2`. The caller needs permission to write objects to the chosen bucket.
+Choose a unique, non-empty prefix per run: existing objects with the same keys
+are overwritten, and a reused prefix can also retain stale objects from earlier
+runs. S3 bucket versioning, if enabled, is independent of this implementation.
+
+Under the prefix, the implementation stores the metadata JSON, successfully
+downloaded documents, `rendered-pages/` images, the full prioritized run record,
+and the final-output JSON. Relative `saved_as` names in the metadata and sources
+are relative to that prefix. The returned `storage.objects` maps each relative
+artifact path to its bucket, key, S3 URI and version; the persisted run record
+retains the screening result without that storage mapping. Prompt and config paths
+are recorded as local provenance, not uploaded files.
+
+Processing still requires temporary local disk for downloads and rendered pages.
+Files are uploaded after screening, one at a time; each is read into memory for
+upload. If screening fails, already generated files, including an invalid model
+response where available, are uploaded on a best-effort basis before temporary
+cleanup. Upload errors are reported, and partially uploaded objects may remain;
+there is no rollback or automatic retry of the run. Documents and extracted
+evidence may contain sensitive information, so use an appropriately controlled
+bucket and retention policy.
+
+### S3 spatial screening
+
+The standalone [S3 spatial implementation](backend/src/spatial_screening/implementations/s3_spatial_agent.py)
+performs the same IRZ spatial screening sequence as the
+[IRZ code agent](backend/src/spatial_screening/implementations/irz_code_agent.py)
+and stores the complete result in S3. The orchestrator still uses the local IRZ
+code agent.
+
+```python
+from backend.src.spatial_screening.implementations.s3_spatial_agent import (
+  run_s3_spatial_screening,
+)
+from backend.src.utilities.s3_utils import create_s3_client
+
+result = run_s3_spatial_screening(
+  polygon=polygon,
+  context=context,
+  model_config_path="/absolute/path/to/model.yaml",
+  bucket="my-consultation-bucket",
+  prefix="consultations/example/run-001",
+  s3_client=create_s3_client(region="eu-west-2", profile_name="my-profile"),
+)
+print(result["human_review_required"])
+print(result["storage"]["s3_uri"])
+```
+
+The S3 client is optional; when omitted, it uses the default AWS credential chain
+and `eu-west-2`. The result is written to `<prefix>/spatial_screening.json` without
+its `storage` entry, and the returned `storage` gives the bucket, key, version and
+S3 URI. Existing objects at that key are overwritten, so use a unique prefix per run.
+
+Only the result is stored in S3. The local GIS layers and reference files under
+`data/` are still required, as is access to the internal IRZ endpoint. The
+context, polygon and model configuration remain caller inputs. If screening fails,
+nothing is uploaded; if the upload fails, a `RuntimeError` names the destination
+and chains the original cause.
+
+### S3 decision
+
+The standalone [S3 decision implementation](backend/src/decision/implementations/s3_decision_agent.py)
+runs the same deterministic rules as the [decision module](backend/src/decision/implementations/decision_module.py)
+and writes `<prefix>/decision.json` to S3. Its inputs are the stage outputs passed by the caller.
+
+```python
+from backend.src.decision.implementations.s3_decision_agent import run_s3_decision
+
+result = run_s3_decision(
+  stage_outputs,
+  bucket="my-bucket",
+  prefix="consultations/26-00123/decision",
+)
+```
+
+### Orchestrators
+
+Two standalone orchestrators run the consultation flow in sequence and stop on the
+first stage error. Both return a run record with `run_id`, `consultation_id`,
+`stage_outputs` and `errors`. A failure to save the run is added to `errors` and does
+not raise.
+
+- [Local orchestrator](backend/orchestrator/implementations/orchestrator.py): `run_consultation(case_data, model_config_path, output_directory)`
+  accepts the case intake output directly, runs document screening, spatial screening and
+  decision, and saves `run.json` to `output_directory`.
+- [S3 orchestrator](backend/orchestrator/implementations/s3_orchestrator.py): `run_s3_consultation(...)`
+  runs case intake from an email file, then the three later stages, and saves each stage
+  under its own prefix. The run record is saved as `<prefix>/run.json`.
+
+S3 layout for the S3 orchestrator:
+
+```text
+<prefix>/case_intake/
+<prefix>/document_screening/        # artifacts named per application, plus the result JSON
+<prefix>/spatial_screening/spatial_screening.json
+<prefix>/decision/decision.json
+<prefix>/run.json
+```
+
+Shared helpers for each module live in its `tools/` folder. Case intake uses its own
+S3 client, so the `s3_client` passed to `run_s3_consultation` is not used for intake.
+
 ## Tests
 
-Run `uv run python -m unittest discover -s tests -v`.
-Tests use an in-memory Ollama HTTP transport and Bedrock SDK stubs; they require
-neither a running model server nor AWS credentials and make no inference calls.
+Run commands from the repository root.
+
+Backend orchestration tests:
+`uv run python -m unittest discover -s tests/backend -p test_orchestrator.py -v`
+
+Backend S3 tests:
+`uv run python -m unittest discover -s tests/backend -p 'test_s3_*.py' -v`
+
+LPA client tests (offline by default):
+`uv run python -m unittest discover -s tests/backend -p test_lpa_client.py -v`
+
+Live polygon checks for East Devon `26/0652/FUL`, Southampton `25/01506/FUL`, and
+Dacorum `26/01765/OUT`:
+`RUN_LPA_LIVE_TESTS=1 uv run python -m unittest discover -s tests/backend -p test_lpa_client.py -k real_applications -v`
+
+The live checks search the actual portals and require a non-empty polygon in the
+existing coordinate-list format. They do not download documents, call models, or
+infer polygons. Portal outages and access restrictions fail the checks rather
+than being skipped. Add `--system-certs` after `uv` if required by your environment.
+
+Frontend tests:
+`uv run python -m unittest discover -s tests/frontend -v`
+
+Some legacy integration tests may require additional setup; avoid running them
+against live services unintentionally.

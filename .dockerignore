@@ -1,0 +1,21 @@
+# The deployed frontend does not use the root data directory
+# Frontend data remains available in the build context - it is copied over
+/data/
+.git/
+.github/
+notebooks/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[oc]
+**/*.egg-info/
+**/.DS_Store
+build/
+dist/
+wheels/
+**/.env
+**/.env.*
+tests/
+testing/
+**/.pytest_cache/
+**/.mypy_cache/

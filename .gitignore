@@ -1,26 +1,27 @@
-# Python-generated files
+# Python caches and build artifacts
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
 *.egg-info
-.DS_Store
 
-# Virtual environments
+# Python virtual environments
 .venv
 venv
 
-# Local credentials
+# Local environment variables and credentials
 .env
 .env.*
 !.env.example
 
+# Local data and generated outputs
 data/temp/
 data/runs/
 data/OS_Open_Built_Up_Areas_GeoPackage/
-.github/
-notebooks/
+data/emails/
+data/mock_rds_tables/
+frontend/prototyping
 
 # Terraform working directories, state, and saved plans
 .terraform/
@@ -32,9 +33,15 @@ notebooks/
 *.tfvars
 !*.tfvars.example
 
+# Local model configuration, except example placeholders
 environment/model_configs/*
 !environment/model_configs/bedrock-placeholder.yaml
 !environment/model_configs/ollama-placeholder.yaml
 
 # Personal directory
 personal/
+
+# Other local files and directories
+.DS_Store
+.github/
+notebooks/

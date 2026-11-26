@@ -1,7 +1,7 @@
 document_screening:
   max_concurrent_downloads: 5
   include_maybe: false
-  ignore_after: null
+  default_polygon_area_square_metres: 50000
 
 lpa:
   request_interval_seconds: 0

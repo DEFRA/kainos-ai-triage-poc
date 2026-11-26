@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Union
 
 from backend.src.utilities.llm_client import LLMClient
+from backend.src.utilities.llm_json_parser import parse_llm_json
 from ..tools.internal_irz_client import InternalIRZClient
 from ..tools.utilities import check_strategic, get_consultation_questions
 
@@ -36,9 +37,12 @@ def run_spatial_screening(
 				)
 				answered_questions.append({
 					"question": question,
-					"answer": intelligence.generate(
-						prompt,
-						system_prompt=system_prompt,
+					"answer": json.dumps(
+						parse_llm_json(intelligence.generate(
+							prompt,
+							system_prompt=system_prompt,
+						)),
+						ensure_ascii=False,
 					),
 				})
 

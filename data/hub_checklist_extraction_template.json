@@ -1,0 +1,136 @@
+{
+  "ne_reply_due_date": {
+    "label": "NE Reply Due Date",
+    "value": null
+  },
+  "lpa_website_link": {
+    "label": "LPA Website Link",
+    "value": null
+  },
+  "application_details": {
+    "type_of_application": {
+      "label": "Type of application",
+      "value": null
+    },
+    "coordinates": {
+      "label": "Coordinates",
+      "value": null
+    },
+    "site_area_ha": {
+      "label": "Site area (Ha)",
+      "value": null
+    },
+    "discharges_foul_sewage": {
+      "label": "Discharges foul sewage",
+      "value": null
+    },
+    "net_gain": {
+      "label": "Net Gain",
+      "value": null
+    },
+    "internal_floorspace": {
+      "label": "Internal floorspace",
+      "value": null
+    },
+    "conditions": {
+      "label": "Conditions",
+      "value": null
+    },
+    "amendments": {
+      "label": "Amendments",
+      "value": null
+    },
+    "additional_information": {
+      "label": "Additional information",
+      "value": null
+    }
+  },
+  "planning_screening": {
+    "1a": {
+      "question": "Have we had previous history/correspondence regarding this case?",
+      "value": null
+    },
+    "1b": {
+      "question": "Is this consultation an EIA Screening or Scoping Opinion?",
+      "value": null
+    },
+    "1c": {
+      "question": "Is this an amendment request?",
+      "value": null
+    },
+    "1d": {
+      "question": "Is this a conditions request?",
+      "value": null
+    },
+    "1e": {
+      "question": "Is this a pre-app consultation?",
+      "value": null
+    },
+    "1f": {
+      "question": "Is this a Prior Approval or Prior Notification?",
+      "value": null
+    },
+    "1g": {
+      "question": "Does the proposal relate to the reclamation and/or other changes within an existing waste/minerals site?",
+      "value": null
+    },
+    "1h": {
+      "question": "Does the consultation relate to a new minerals or waste proposal on an area over 5ha?",
+      "value": null
+    },
+    "1i": {
+      "question": "Does the consultation have the potential for the loss of over 20ha of agricultural land?",
+      "value": null
+    },
+    "1j": {
+      "question": "Does the proposal fall within a SPA/SAC/RAMSAR/SSSI?",
+      "value": null
+    },
+    "1k": {
+      "question": "Does the proposal trigger a SSSI Impact Risk Zone (IRZ)?",
+      "value": null
+    },
+    "1l": {
+      "question": "Does the proposal fall in or trigger a National Landscape IRZ?",
+      "value": null
+    },
+    "1m": {
+      "question": "Does the development have the potential to impact the England Coast Path?",
+      "value": null
+    },
+    "1n": {
+      "question": "If the proposal is for an agricultural development, is it SIG and/or NN related?",
+      "value": null
+    },
+    "1o": {
+      "question": "If recreational disturbance is relevant, is there an HRA/AA attached or on the LPA website?",
+      "value": null
+    },
+    "1p": {
+      "question": "If nutrient neutrality is relevant, is there an HRA/AA attached or on the LPA website?",
+      "value": null
+    },
+    "1q": {
+      "question": "Do you need to include any additional paragraphs?",
+      "value": null
+    }
+  },
+  "mmo_screening": {
+    "1k": {
+      "question": "Have we had previous history/correspondence regarding this case?",
+      "value": null
+    },
+    "1l": {
+      "question": "Is the activity/proposal listed on the Marine IRZ exemption list?",
+      "value": null
+    },
+    "1m": {
+      "question": "Does the proposal fall within a SPA/SAC/RAMSAR/SSSI/MCZ?",
+      "value": null
+    },
+    "1n": {
+      "question": "Does the proposal fall within a Marine Impact Risk Zone (MIRZ) to send to the Area Team?",
+      "value": null
+    }
+  }
+}

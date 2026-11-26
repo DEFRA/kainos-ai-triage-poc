@@ -34,7 +34,7 @@ body,
 }
 
 main .block-container {
-  max-width: 60rem;
+  max-width: none;
   padding-top: 1.75rem;
   padding-bottom: 3rem;
 }
@@ -228,9 +228,25 @@ div[data-baseweb="radio"] > div {
   box-shadow: none !important;
 }
 
+.stCheckbox label:has(input[type="checkbox"]:not([role="switch"])) > div:first-of-type {
+  background: #ffffff !important;
+  border: 2px solid #0b0c0c !important;
+  border-radius: 0 !important;
+}
+
+.stCheckbox label:has(input[type="checkbox"]:not([role="switch"])) > div:first-of-type svg {
+  stroke: #0b0c0c !important;
+}
+
+.stCheckbox label[data-focus-visible]:has(input[type="checkbox"]:not([role="switch"])) > div:first-of-type {
+  outline: 3px solid #ffdd00;
+  outline-offset: 0;
+}
+
 .stButton > button,
 .stDownloadButton > button,
 .stForm [data-testid="baseButton-secondary"],
+button[kind="primaryFormSubmit"],
 button[kind="secondary"],
 button[kind="tertiary"] {
   border-radius: 0 !important;
@@ -244,9 +260,19 @@ button[kind="tertiary"] {
 }
 
 .stButton > button[kind="primary"],
-button[kind="primary"] {
+button[kind="primary"],
+button[kind="primaryFormSubmit"] {
   border: 2px solid #005a30 !important;
   background: var(--gds-success) !important;
+  color: #ffffff !important;
+}
+
+.stButton > button[kind="primary"] p,
+.stButton > button[kind="primary"] span,
+button[kind="primary"] p,
+button[kind="primary"] span,
+button[kind="primaryFormSubmit"] p,
+button[kind="primaryFormSubmit"] span {
   color: #ffffff !important;
 }
 
@@ -258,7 +284,8 @@ button[kind="tertiary"]:hover {
 }
 
 .stButton > button[kind="primary"]:hover,
-button[kind="primary"]:hover {
+button[kind="primary"]:hover,
+button[kind="primaryFormSubmit"]:hover {
   background: #005a30 !important;
 }
 
@@ -274,6 +301,11 @@ section[data-testid="stFileUploaderDropzone"] {
   border: 2px dashed var(--gds-border) !important;
   border-radius: 0 !important;
   padding: 1rem;
+}
+
+section[data-testid="stFileUploaderDropzone"]
+  [data-testid="stFileUploaderDropzoneInstructions"] span {
+  color: #505a5f !important;
 }
 
 section[data-testid="stFileUploaderDropzone"]:hover {
@@ -351,6 +383,15 @@ div[data-testid="stExpander"] {
 
 div[data-testid="stExpander"] summary {
   font-weight: 700;
+}
+
+div[data-testid="stJson"],
+div[data-testid="stJson"] div {
+  background-color: #ffffff !important;
+}
+
+div[data-testid="stJson"] span {
+  color: #0b0c0c !important;
 }
 
 pre,

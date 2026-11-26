@@ -17,11 +17,14 @@ def intersect_polygon_with_layer(
     layer_name: str,
     polygon: list[list[float]],
     polygon_crs: str = "EPSG:27700",
+    *,
+    where: str | None = None,
 ) -> dict[str, object]:
     """Return JSON-ready intersection details and unique polygon coverage.
 
     The data source may be a GeoPackage file or a File Geodatabase directory.
     Area is reported in square metres; the polygon CRS must be projected.
+    Optional where is an OGR SQL attribute filter applied before intersection.
     """
     data_source = Path(data_source).resolve()
     if not data_source.exists():
@@ -76,7 +79,7 @@ def intersect_polygon_with_layer(
             layer_bounds = development_polygon.bounds
             project_to_polygon = None
 
-        for feature in layer.filter(bbox=layer_bounds):
+        for feature in layer.filter(bbox=layer_bounds, where=where):
             if feature.geometry is None:
                 continue
             region = shape(feature.geometry)
