@@ -2,6 +2,9 @@
 
 import base64
 import os
+import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from pathlib import Path
 from types import TracebackType
@@ -13,6 +16,41 @@ import yaml
 from dotenv import load_dotenv
 from openai import NOT_GIVEN, OpenAI
 from openai.types.chat import ChatCompletionContentPartParam, ChatCompletionMessageParam
+
+
+_usage_collector = ContextVar("llm_usage_collector", default=None)
+
+
+@contextmanager
+def collect_llm_usage():
+    """Collect per-call provider token usage for the current execution context."""
+    usage = {}
+    token = _usage_collector.set(usage)
+    try:
+        yield usage
+    finally:
+        _usage_collector.reset(token)
+
+
+def _start_usage_record(config):
+    usage = _usage_collector.get()
+    if usage is None:
+        return None
+    caller = Path(sys._getframe(2).f_code.co_filename).name
+    record = {
+        "provider": config.provider,
+        "model": config.model,
+        "input_tokens": None,
+        "output_tokens": None,
+    }
+    usage.setdefault(caller, []).append(record)
+    return record
+
+
+def _set_usage_counts(record, input_tokens, output_tokens):
+    if record is not None:
+        record["input_tokens"] = input_tokens if type(input_tokens) is int and input_tokens >= 0 else None
+        record["output_tokens"] = output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
 
 
 @dataclass(frozen=True)
@@ -188,6 +226,7 @@ class LLMClient:
                 messages.append({"role": "user", "content": content_parts})
             else:
                 messages.append({"role": "user", "content": prompt})
+            usage_record = _start_usage_record(self.config)
             response = self._ollama.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
@@ -198,6 +237,8 @@ class LLMClient:
                 ),
                 stream=False,
             )
+            usage = response.usage
+            _set_usage_counts(usage_record, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
             if not response.choices:
                 raise RuntimeError("Ollama returned no response choices.")
             choice = response.choices[0]
@@ -236,12 +277,15 @@ class LLMClient:
                     "thinking": {"type": "adaptive"},
                     "output_config": {"effort": self.config.thinking_level},
                 }
+            usage_record = _start_usage_record(self.config)
             result = self._bedrock.converse(
                 modelId=self.config.model,
                 messages=[{"role": "user", "content": content_blocks}],
                 inferenceConfig={"maxTokens": self.config.max_output_tokens},
                 **optional_fields,
             )
+            usage = result.get("usage") or {}
+            _set_usage_counts(usage_record, usage.get("inputTokens"), usage.get("outputTokens"))
             if result["stopReason"] not in ("end_turn", "stop_sequence"):
                 raise RuntimeError(
                     "Bedrock did not return a complete answer "
