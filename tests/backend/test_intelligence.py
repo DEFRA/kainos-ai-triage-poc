@@ -1,19 +1,21 @@
 import base64
+import ast
+import contextlib
+import csv
+import io
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-
 import boto3
 import httpx
 import yaml
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 from openai import AuthenticationError, OpenAI
-
-from backend.src.utilities.llm_client import LLMClient, ModelConfig
+from backend.src.utilities.llm_client import LLMClient, ModelConfig, collect_llm_usage
 
 
 class LLMClientTests(unittest.TestCase):
@@ -34,7 +36,7 @@ class LLMClientTests(unittest.TestCase):
         self.config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
         return self.config_path
 
-    def ollama_client(self, *, content="Answer", finish_reason="stop", status=200):
+    def ollama_client(self, *, content="Answer", finish_reason="stop", status=200, usage=None):
         def respond(request):
             self.requests.append(request)
             return httpx.Response(
@@ -44,6 +46,7 @@ class LLMClientTests(unittest.TestCase):
                     "object": "chat.completion",
                     "created": 0,
                     "model": "test-model",
+                    "usage": usage,
                     "choices": [{
                         "index": 0,
                         "finish_reason": finish_reason,
@@ -159,6 +162,113 @@ class LLMClientTests(unittest.TestCase):
             "max_tokens": 42,
             "stream": False,
         })
+
+    def test_usage_collector_tracks_each_ollama_call(self):
+        self.write_config()
+        client, _ = self.ollama_client(usage={"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15})
+        with collect_llm_usage() as usage:
+            self.assertEqual(client.generate("First"), "Answer")
+            self.assertEqual(client.generate("Second"), "Answer")
+        self.assertEqual(usage["test_intelligence.py"], [
+            {"provider": "ollama", "model": "test-model", "input_tokens": 12, "output_tokens": 3},
+            {"provider": "ollama", "model": "test-model", "input_tokens": 12, "output_tokens": 3},
+        ])
+
+    def test_usage_collector_records_bedrock_incomplete_response(self):
+        client, stubber = self.bedrock_client()
+        stubber.add_response("converse", self.bedrock_response(stop_reason="max_tokens"), self.bedrock_request())
+        with collect_llm_usage() as usage:
+            with self.assertRaisesRegex(RuntimeError, "max_tokens"):
+                client.generate("Question")
+        self.assertEqual(usage["test_intelligence.py"], [{
+            "provider": "bedrock", "model": "anthropic.test-model", "input_tokens": 5, "output_tokens": 10,
+        }])
+
+    def test_usage_collector_records_failed_or_unreported_calls(self):
+        self.write_config()
+        client, _ = self.ollama_client()
+        failing_client, _ = self.ollama_client(status=401)
+        with collect_llm_usage() as usage:
+            client.generate("Question")
+            with self.assertRaises(AuthenticationError):
+                failing_client.generate("Question")
+        self.assertEqual(usage["test_intelligence.py"], [
+            {"provider": "ollama", "model": "test-model", "input_tokens": None, "output_tokens": None},
+            {"provider": "ollama", "model": "test-model", "input_tokens": None, "output_tokens": None},
+        ])
+
+    def test_usage_collector_is_scoped_and_restores_nested_collector(self):
+        self.write_config()
+        client, _ = self.ollama_client()
+        with collect_llm_usage() as outer:
+            client.generate("First")
+            with collect_llm_usage() as inner:
+                client.generate("Second")
+            client.generate("Third")
+        client.generate("Outside")
+        self.assertEqual(len(outer["test_intelligence.py"]), 2)
+        self.assertEqual(len(inner["test_intelligence.py"]), 1)
+
+    def test_performance_notebook_records_usage_for_success_and_failure(self):
+        self.write_config()
+        client, _ = self.ollama_client(usage={"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15})
+        failing_client, _ = self.ollama_client(status=401)
+        bedrock_client, stubber = self.bedrock_client()
+        stubber.add_response("converse", self.bedrock_response(), self.bedrock_request())
+        directory = Path(self.directory.name)
+        for consultation_id in ("success", "failure"):
+            folder = directory / "sample" / consultation_id
+            folder.mkdir(parents=True)
+            (folder / "email.eml").write_text("email", encoding="utf-8")
+        output_path = directory / "results.csv"
+        notebook_path = Path(__file__).resolve().parents[2] / "notebooks/performance_testing.ipynb"
+        cell = json.loads(notebook_path.read_text(encoding="utf-8"))["cells"][0]["source"]
+        tree = ast.parse(cell if isinstance(cell, str) else "\n".join(cell))
+        replacements = {
+            "labels": ["sample"], "selection_mode": "all",
+            "emails_root": str(directory), "results_path": str(output_path),
+        }
+
+        class ConfigureNotebook(ast.NodeTransformer):
+            def visit_Assign(self, node):
+                if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    name = node.targets[0].id
+                    if name in replacements:
+                        value = repr(replacements[name])
+                        if name in {"emails_root", "results_path"}:
+                            value = f"Path({value})"
+                        return ast.copy_location(ast.parse(f"{name} = {value}").body[0], node)
+                return self.generic_visit(node)
+
+        def fake_run(**kwargs):
+            client.generate("Question")
+            if kwargs["consultation_id"] == "failure":
+                try:
+                    failing_client.generate("Question")
+                except AuthenticationError as error:
+                    raise RuntimeError("failed after model call") from error
+            client.generate("Second")
+            bedrock_client.generate("Question")
+            return {"errors": [], "run_id": "run", "stage_outputs": {"decision": {"classification": "unnecessary"}}}
+
+        tree = ast.fix_missing_locations(ConfigureNotebook().visit(tree))
+        with patch("backend.orchestrator.implementations.s3_orchestrator.run_s3_consultation", side_effect=fake_run), \
+             patch("backend.src.utilities.s3_utils.create_s3_client"), \
+             patch.dict(os.environ), contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(tree, str(notebook_path), "exec"), {})
+
+        with output_path.open(encoding="utf-8", newline="") as file:
+            rows = {row["consultation_id"]: row for row in csv.DictReader(file)}
+        self.assertEqual(len(json.loads(rows["success"]["llm_token_usage"])["test_intelligence.py"]), 3)
+        self.assertEqual(len(json.loads(rows["failure"]["llm_token_usage"])["test_intelligence.py"]), 2)
+        success_totals = json.loads(rows["success"]["llm_token_totals"])
+        self.assertEqual(success_totals["ollama"]["test-model"]["total_tokens"], 30)
+        self.assertEqual(success_totals["bedrock"]["anthropic.test-model"]["total_tokens"], 15)
+        failure_totals = json.loads(rows["failure"]["llm_token_totals"])["ollama"]["test-model"]
+        self.assertEqual(failure_totals["known_total_tokens"], 15)
+        self.assertIsNone(failure_totals["total_tokens"])
+        self.assertEqual(failure_totals["calls_with_missing_usage"], 1)
+        self.assertIn("failed after model call", rows["failure"]["error_message"])
 
     def test_ollama_thinking_levels_and_no_implicit_history(self):
         for level in ("low", "medium", "high"):

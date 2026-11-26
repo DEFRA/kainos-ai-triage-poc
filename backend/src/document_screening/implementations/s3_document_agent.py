@@ -349,6 +349,8 @@ def run_s3_document_screening(
             final_output = add_polygon_metadata(
                 final_output, settings["default_polygon_area_square_metres"],
             )
+            for source in sources:
+                source["s3"] = {"bucket": bucket, "key": f"{prefix}/{source['saved_as']}"}
             result = {
                 "reference": reference,
                 "id": application_key,
