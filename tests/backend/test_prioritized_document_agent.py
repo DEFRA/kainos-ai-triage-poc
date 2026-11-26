@@ -98,6 +98,7 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self,
         *,
         include_maybe=False,
+        include_attachments=True,
         max_workers=2,
         default_polygon_area_square_metres=50_000,
     ):
@@ -106,6 +107,7 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
             "document_screening:\n"
             f"  max_concurrent_downloads: {max_workers}\n"
             f"  include_maybe: {str(include_maybe).lower()}\n"
+            f"  include_attachments: {str(include_attachments).lower()}\n"
             f"  default_polygon_area_square_metres: {default_polygon_area_square_metres}\n"
             "lpa:\n"
             "  request_interval_seconds: 0\n"
@@ -134,6 +136,7 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self.assertEqual(_load_implementation_config(config_path), {
             "max_concurrent_downloads": 2,
             "include_maybe": False,
+            "include_attachments": True,
             "default_polygon_area_square_metres": 50_000.0,
             "lpa_settings": {
                 "request_interval_seconds": 0,
@@ -207,6 +210,20 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self.assertIn("Starting document ranking", progress.getvalue())
         self.assertIn("Completed downloads: 1/1", progress.getvalue())
         self.assertIn("Completed output save", progress.getvalue())
+
+    def test_text_only_config_does_not_attach_pdf_pages(self):
+        config_path = self._write_config(include_attachments=False)
+
+        result = self.run_agent(config_path)
+
+        self.parser.assert_called_once_with(
+            self.output_directory / "11.pdf",
+            self.output_directory / "rendered-pages",
+            dpi=150,
+            render_images=False,
+        )
+        self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
+        self.assertNotIn("attachment_number", result["sources"][0]["pages"][0])
 
     def test_ignore_after_is_passed_as_a_function_parameter(self):
         cutoff = date(2026, 10, 21)

@@ -7,7 +7,13 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Union
 
-from backend.src.utilities.document_parser import parse_pdf
+from backend.src.utilities.document_parser import (
+    parse_doc,
+    parse_docx,
+    parse_pdf,
+    parse_rtf,
+    parse_xlsx,
+)
 from backend.src.utilities.llm_client import LLMClient
 from ..tools.lpa_client import PublicAccessClient
 from ..tools.utilities import (
@@ -147,6 +153,7 @@ def run_prioritized_document_screening(
 
     attachments = []
     sources = []
+    preparation_warnings = []
     print("[document screening] Starting document preparation.")
     for document in metadata["documents"]:
         if not document.get("downloaded"):
@@ -158,19 +165,62 @@ def run_prioritized_document_screening(
             "pages": [],
         }
         if document_path.suffix.lower() == ".pdf":
-            pages = parse_pdf(document_path, output_directory / "rendered-pages", dpi=dpi)
+            pages = parse_pdf(
+                document_path,
+                output_directory / "rendered-pages",
+                dpi=dpi,
+                render_images=settings["include_attachments"],
+            )
             if not pages:
                 raise ValueError(f"Document {document['id']} contains no PDF pages.")
+            omitted_visual_pages = []
             for page in pages:
-                attachments.append(page.image_path)
-                source["pages"].append({
+                page_source = {
                     "page_number": page.page_number,
                     "text": page.text,
-                    "attachment_number": len(attachments),
-                })
-        else:
+                }
+                if settings["include_attachments"]:
+                    if page.image_path is None:
+                        raise RuntimeError("PDF page image was not rendered for attachment.")
+                    attachments.append(page.image_path)
+                    page_source["attachment_number"] = len(attachments)
+                elif page.has_visual_content:
+                    omitted_visual_pages.append(page.page_number)
+                source["pages"].append(page_source)
+            if omitted_visual_pages:
+                preparation_warnings.append(
+                    f"Document {document['id']} has non-text visual content on PDF pages "
+                    f"{', '.join(map(str, omitted_visual_pages))}; those page images were "
+                    "not sent because include_attachments is false."
+                )
+        elif settings["include_attachments"]:
             attachments.append(document_path)
             source["attachment_number"] = len(attachments)
+        else:
+            try:
+                suffix = document_path.suffix.lower()
+                if suffix == ".docx":
+                    source["text"] = parse_docx(document_path)
+                elif suffix == ".xlsx":
+                    source["sheets"] = parse_xlsx(document_path)
+                elif suffix == ".doc":
+                    source["text"] = parse_doc(document_path)
+                elif suffix == ".rtf":
+                    source["text"] = parse_rtf(document_path)
+                elif suffix in {".csv", ".html", ".txt", ".md"}:
+                    source["text"] = document_path.read_text(encoding="utf-8")
+                else:
+                    detail = "No text extractor is available for this format."
+                    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+                        detail = "Image OCR is not enabled."
+                    raise ValueError(detail)
+            except (OSError, UnicodeError, ValueError, RuntimeError) as error:
+                warning = (
+                    f"Document {document['id']} ({document['saved_as']}) could not be "
+                    f"sent as text: {type(error).__name__}: {error}"
+                )
+                source["extraction_error"] = warning
+                preparation_warnings.append(warning)
         sources.append(source)
     print(
         f"[document screening] Completed document preparation: "
@@ -194,9 +244,14 @@ def run_prioritized_document_screening(
     }
     prompt = (
         "Application metadata and downloaded document evidence:\n"
-        + json.dumps({"metadata": model_metadata, "sources": sources}, ensure_ascii=False, indent=2)
-        + "\n\nAttachments follow in the numbered order recorded above. "
-        "PDF attachments are page images; extracted page text is included above."
+        + json.dumps({
+            "metadata": model_metadata,
+            "sources": sources,
+            "preparation_warnings": preparation_warnings,
+        }, ensure_ascii=False, indent=2)
+        + ("\n\nAttachments follow in the numbered order recorded above. "
+           "PDF attachments are page images; extracted page text is included above."
+           if attachments else "\n\nNo file attachments are included. Extracted PDF page text is included above.")
     )
     with LLMClient(model_config_path) as llm_client:
         if context_limit is not None:
@@ -219,10 +274,11 @@ def run_prioritized_document_screening(
 
     try:
         document_findings = parse_document_findings(response)
+        processing_warnings = downloaded_warnings + preparation_warnings
         if isinstance(document_findings.get("limitations"), list):
-            document_findings["limitations"].extend(downloaded_warnings)
-        elif downloaded_warnings:
-            document_findings["processing_limitations"] = downloaded_warnings
+            document_findings["limitations"].extend(processing_warnings)
+        elif processing_warnings:
+            document_findings["processing_limitations"] = processing_warnings
         final_output = merge_document_findings(metadata, document_findings)
     except ValueError as error:
         response_path = output_directory / f"{application_key}-prioritized-response.txt"

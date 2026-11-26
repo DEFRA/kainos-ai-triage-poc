@@ -57,6 +57,8 @@ class DocumentParserTests(unittest.TestCase):
         self.assertEqual([page.page_number for page in pages], [1, 2])
         self.assertIn("Planning evidence", pages[0].text)
         self.assertIn("Drainage findings", pages[1].text)
+        self.assertFalse(pages[0].has_visual_content)
+        self.assertFalse(pages[1].has_visual_content)
         for page in pages:
             self.assertEqual(page.source_path, self.pdf_path.resolve())
             self.assertEqual(
@@ -87,8 +89,38 @@ class DocumentParserTests(unittest.TestCase):
 
         self.assertEqual(len(pages), 1)
         self.assertEqual(pages[0].text, "")
+        self.assertTrue(pages[0].has_visual_content)
         with Image.open(pages[0].image_path) as image:
             self.assertLess(image.convert("L").getextrema()[0], 255)
+
+    def test_jpeg_rendering_uses_jpeg_files(self):
+        pages = parse_pdf(
+            self.pdf_path, self.output_directory, dpi=72, image_format="jpeg",
+        )
+
+        self.assertEqual(pages[0].image_path.suffix, ".jpg")
+        with Image.open(pages[0].image_path) as image:
+            self.assertEqual(image.format, "JPEG")
+
+    def test_text_extraction_can_skip_page_rendering(self):
+        pages = parse_pdf(
+            self.pdf_path, self.output_directory, dpi=72, render_images=False,
+        )
+
+        self.assertIn("Planning evidence", pages[0].text)
+        self.assertIsNone(pages[0].image_path)
+        self.assertFalse(self.output_directory.exists())
+
+    def test_invalid_render_options_fail_before_creating_output(self):
+        for options in (
+            {"image_format": "webp"},
+            {"jpeg_quality": 0},
+            {"jpeg_quality": 96},
+            {"jpeg_quality": True},
+        ):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                parse_pdf(self.pdf_path, self.output_directory, **options)
+        self.assertFalse(self.output_directory.exists())
 
     def test_existing_render_is_not_overwritten(self):
         # Render a PDF twice into the same output directory.

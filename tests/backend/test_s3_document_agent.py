@@ -26,6 +26,12 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        self.default_implementation_config = self.root / "implementation.yaml"
+        self.default_implementation_config.write_text(
+            "document_screening:\n  max_concurrent_downloads: 5\n"
+            "  include_attachments: true\nlpa: {}\n",
+            encoding="utf-8",
+        )
         self.metadata = {
             "reference": "25/123", "id": "KEY", "summary": {},
             "further_information": {}, "polygon": [],
@@ -92,21 +98,41 @@ class S3DocumentAgentTests(unittest.TestCase):
                     document_path.write_bytes(f"pdf-{document['id']}".encode())
         (directory / "KEY-metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
-    def parse_pdf(self, document_path, directory, *, dpi):
+    def parse_pdf(
+        self, document_path, directory, *, dpi, image_format="png", jpeg_quality=90,
+        render_images=True,
+    ):
+        if not render_images:
+            return [ParsedPage(document_path, 1, "Page text", None, True)]
         directory.mkdir(exist_ok=True)
-        image_path = directory / f"{document_path.stem}-page-0001.png"
+        suffix = ".jpg" if image_format == "jpeg" else ".png"
+        image_path = directory / f"{document_path.stem}-page-0001{suffix}"
         image_path.write_bytes(b"page-image")
-        return [ParsedPage(document_path, 1, "Page text", image_path)]
+        return [ParsedPage(document_path, 1, "Page text", image_path, True)]
 
     def put_object(self, *, Bucket, Key, Body):
         self.objects[Key] = Body
         return {"VersionId": "version-1"}
 
     def run_agent(self, **kwargs):
+        kwargs.setdefault("implementation_config_path", self.default_implementation_config)
         return run_s3_document_screening(
             "25/123", "https://example.test/", "model.yaml",
             bucket="bucket", prefix="/case/run/", **kwargs,
         )
+
+    def prompt_source_data(self, prompt):
+        content = prompt.split(
+            "Application metadata and downloaded document evidence:\n", 1
+        )[1]
+        for marker in (
+            "\n\nAttachments follow in the numbered order recorded above.",
+            "\n\nNo file attachments are included.",
+        ):
+            if marker in content:
+                content = content.split(marker, 1)[0]
+                break
+        return json.loads(content)
 
     def test_complete_run_uploads_all_artifacts_and_preserves_output(self):
         cutoff = date(2026, 10, 21)
@@ -117,16 +143,21 @@ class S3DocumentAgentTests(unittest.TestCase):
             "KEY", self.metadata, self.output_directory, ["11"], max_workers=5,
         )
         self.parser.assert_called_once_with(
-            self.output_directory / "11.pdf", self.output_directory / "rendered-pages", dpi=200,
+            self.output_directory / "11.pdf",
+            self.output_directory / "rendered-pages",
+            dpi=200,
+            image_format="jpeg",
+            jpeg_quality=90,
+            render_images=True,
         )
         expected = {
-            "11.pdf", "rendered-pages/11-page-0001.png", "KEY-metadata.json",
+            "11.pdf", "rendered-pages/11-page-0001.jpg", "KEY-metadata.json",
             "KEY-prioritized-document-findings.json",
             "KEY-prioritized-final-output.json", "KEY-prioritized-document-screening.json",
         }
         self.assertEqual(set(result["storage"]["objects"]), expected)
         self.assertEqual(self.objects["case/run/11.pdf"], b"pdf-11")
-        self.assertEqual(self.objects["case/run/rendered-pages/11-page-0001.png"], b"page-image")
+        self.assertEqual(self.objects["case/run/rendered-pages/11-page-0001.jpg"], b"page-image")
         self.assertEqual(
             json.loads(self.objects["case/run/KEY-prioritized-final-output.json"]),
             result["final_output"],
@@ -143,6 +174,88 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(self.s3.put_object.call_args.kwargs["Key"], "case/run/KEY-prioritized-document-screening.json")
         self.assertNotIn("https://example.test/11.pdf", self.llm.generate.call_args.args[0])
         self.assertFalse(self.output_directory.exists())
+
+    def test_only_pages_with_visual_content_are_attached(self):
+        def parse_text_and_visual_pages(
+            document_path, directory, *, dpi, image_format, jpeg_quality, render_images=True,
+        ):
+            directory.mkdir(exist_ok=True)
+            text_image = directory / "text-only.jpg"
+            visual_image = directory / "visual.jpg"
+            text_image.write_bytes(b"text image")
+            visual_image.write_bytes(b"visual image")
+            return [
+                ParsedPage(document_path, 1, "Extracted text", text_image),
+                ParsedPage(document_path, 2, "Diagram caption", visual_image, True),
+            ]
+
+        self.parser.side_effect = parse_text_and_visual_pages
+
+        result = self.run_agent(s3_client=self.s3)
+
+        self.assertEqual(
+            self.llm.generate.call_args_list[1].kwargs["attachments"],
+            [self.output_directory / "rendered-pages" / "visual.jpg"],
+        )
+        pages = result["sources"][0]["pages"]
+        self.assertNotIn("attachment_number", pages[0])
+        self.assertEqual(pages[1]["attachment_number"], 1)
+
+    def test_text_only_config_sends_no_attachments_or_rendered_pages(self):
+        config_path = self.root / "text-only.yaml"
+        config_path.write_text(
+            "document_screening:\n  include_attachments: false\nlpa: {}\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_agent(
+            s3_client=self.s3, implementation_config_path=config_path,
+        )
+
+        self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
+        self.parser.assert_called_once_with(
+            self.output_directory / "11.pdf",
+            self.output_directory / "rendered-pages",
+            dpi=150,
+            image_format="jpeg",
+            jpeg_quality=90,
+            render_images=False,
+        )
+        self.assertFalse(any(
+            "rendered-pages/" in key for key in result["storage"]["objects"]
+        ))
+        self.assertNotIn("attachment_number", result["sources"][0]["pages"][0])
+        self.assertTrue(any(
+            "page images were not sent" in warning
+            for warning in result["document_findings"]["limitations"]
+        ))
+
+    def test_bedrock_usage_is_preserved_in_result_artifact(self):
+        self.llm.config.provider = "bedrock"
+
+        def generate(*args, **kwargs):
+            self.llm.last_usage = {
+                "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
+            }
+            return (
+                json.dumps(self.findings) if "attachments" in kwargs
+                else json.dumps({"documents": self.ranking})
+            )
+
+        self.llm.generate.side_effect = generate
+
+        result = self.run_agent(s3_client=self.s3)
+
+        expected_usage = {
+            "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
+        }
+        self.assertEqual(result["usage"], {
+            "prioritization": expected_usage, "screening": expected_usage,
+        })
+        stored_result = json.loads(
+            self.objects["case/run/KEY-prioritized-document-screening.json"]
+        )
+        self.assertEqual(stored_result["usage"], result["usage"])
 
     def test_incomplete_development_is_preserved_in_s3_output(self):
         del self.findings["scale_and_type_of_development"]
@@ -172,10 +285,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         result = self.run_agent(s3_client=self.s3)
 
         prompt = self.llm.generate.call_args_list[1].args[0]
-        source_data = json.loads(
-            prompt.split("Application metadata and downloaded document evidence:\n", 1)[1]
-            .split("\n\nAttachments follow", 1)[0]
-        )
+        source_data = self.prompt_source_data(prompt)
         sources = {source["id"]: source for source in source_data["sources"]}
         self.assertEqual(sources["11"]["text"], "Site area is 1.25 ha")
         self.assertEqual(sources["11"]["pages"], [])
@@ -205,10 +315,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         result = self.run_agent(s3_client=self.s3)
 
         prompt = self.llm.generate.call_args_list[1].args[0]
-        source_data = json.loads(
-            prompt.split("Application metadata and downloaded document evidence:\n", 1)[1]
-            .split("\n\nAttachments follow", 1)[0]
-        )
+        source_data = self.prompt_source_data(prompt)
         source = source_data["sources"][0]
         self.assertIn("could not be extracted", source["extraction_error"])
         self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
@@ -223,10 +330,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         result = self.run_agent(s3_client=self.s3)
 
         prompt = self.llm.generate.call_args_list[1].args[0]
-        source_data = json.loads(
-            prompt.split("Application metadata and downloaded document evidence:\n", 1)[1]
-            .split("\n\nAttachments follow", 1)[0]
-        )
+        source_data = self.prompt_source_data(prompt)
         source = source_data["sources"][0]
         self.assertIn("unsupported file format .doc", source["extraction_error"])
         self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
@@ -269,6 +373,7 @@ class S3DocumentAgentTests(unittest.TestCase):
             llm_factory.return_value.__enter__.return_value = self.llm
             local_result = run_prioritized_document_screening(
                 "25/123", "https://example.test/", "model.yaml", local_directory,
+                implementation_config_path=self.default_implementation_config,
             )
         self.assertEqual(local_result, {key: value for key, value in s3_result.items() if key != "storage"})
 

@@ -78,6 +78,9 @@ class LLMClientTests(unittest.TestCase):
             region="eu-west-2",
             aws_profile="test-profile",
             thinking_level=thinking_level,
+            connect_timeout_seconds=10,
+            read_timeout_seconds=120,
+            max_attempts=1,
         )
         sdk = boto3.Session(
             aws_access_key_id="test",
@@ -95,8 +98,17 @@ class LLMClientTests(unittest.TestCase):
         self.addCleanup(client.close)
         factory.assert_called_once_with(profile_name="test-profile")
         session.client.assert_called_once_with(
-            "bedrock-runtime", region_name="eu-west-2", endpoint_url=None
+            "bedrock-runtime",
+            region_name="eu-west-2",
+            endpoint_url=None,
+            config=unittest.mock.ANY,
         )
+        client_config = session.client.call_args.kwargs["config"]
+        self.assertEqual(client_config.connect_timeout, 10)
+        self.assertEqual(client_config.read_timeout, 120)
+        self.assertEqual(client_config.retries, {
+            "mode": "standard", "total_max_attempts": 1,
+        })
         return client, stubber
 
     def bedrock_request(self):
@@ -204,6 +216,9 @@ class LLMClientTests(unittest.TestCase):
             "converse", self.bedrock_response(), self.bedrock_request()
         )
         self.assertEqual(client.generate("Question"), "First answer")
+        self.assertEqual(client.last_usage, {
+            "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
+        })
         stubber.assert_no_pending_responses()
 
     def test_ollama_sends_multiple_images_in_order_without_changing_text_calls(self):
@@ -373,6 +388,11 @@ class LLMClientTests(unittest.TestCase):
             {"max_output_tokens": -1},
             {"max_output_tokens": True},
             {"max_output_tokens": 1.5},
+            {"connect_timeout_seconds": 0},
+            {"connect_timeout_seconds": True},
+            {"read_timeout_seconds": -1},
+            {"max_attempts": 0},
+            {"max_attempts": True},
             {"thinking_level": "maximum"},
             {"thinking_level": False},
             {"base_url": "not-a-url"},

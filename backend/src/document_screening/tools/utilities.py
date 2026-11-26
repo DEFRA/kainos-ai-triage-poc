@@ -152,6 +152,7 @@ def load_prioritization_config(config_path: str | Path | None = None) -> dict:
     allowed = {
         "max_concurrent_downloads",
         "include_maybe",
+        "include_attachments",
         "default_polygon_area_square_metres",
     }
     if not isinstance(settings, dict) or settings.keys() - allowed:
@@ -166,6 +167,9 @@ def load_prioritization_config(config_path: str | Path | None = None) -> dict:
     include_maybe = settings.get("include_maybe", False)
     if type(include_maybe) is not bool:
         raise ValueError("include_maybe must be true or false.")
+    include_attachments = settings.get("include_attachments", True)
+    if type(include_attachments) is not bool:
+        raise ValueError("include_attachments must be true or false.")
 
     default_polygon_area_square_metres = _validate_default_polygon_area(
         settings.get("default_polygon_area_square_metres", DEFAULT_POLYGON_AREA_SQUARE_METRES)
@@ -184,6 +188,7 @@ def load_prioritization_config(config_path: str | Path | None = None) -> dict:
     return {
         "max_concurrent_downloads": max_concurrent_downloads,
         "include_maybe": include_maybe,
+        "include_attachments": include_attachments,
         "default_polygon_area_square_metres": default_polygon_area_square_metres,
         "lpa_settings": lpa_settings,
     }

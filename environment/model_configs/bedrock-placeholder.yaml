@@ -4,6 +4,9 @@ api_style: converse
 model: <model-id>
 region: <region>
 max_output_tokens: 1500
+connect_timeout_seconds: 10
+read_timeout_seconds: 120
+max_attempts: 1
 
 # Optional AWS profile; otherwise use the default AWS credential chain.
 # aws_profile: <aws-profile>

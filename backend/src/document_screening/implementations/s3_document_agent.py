@@ -10,7 +10,13 @@ from typing import Any, Optional, Union
 from zipfile import BadZipFile
 
 from docx.opc.exceptions import PackageNotFoundError
-from backend.src.utilities.document_parser import parse_docx, parse_pdf, parse_xlsx
+from backend.src.utilities.document_parser import (
+    parse_doc,
+    parse_docx,
+    parse_pdf,
+    parse_rtf,
+    parse_xlsx,
+)
 from backend.src.utilities.llm_client import LLMClient
 from backend.src.utilities.s3_utils import create_s3_client, put_object_with_metadata
 from ..tools.lpa_client import PublicAccessClient
@@ -121,6 +127,10 @@ def run_s3_document_screening(
                     )
                     provider = ranking_client.config.provider
                     model = ranking_client.config.model
+                    prioritization_usage = (
+                        ranking_client.last_usage
+                        if isinstance(ranking_client.last_usage, dict) else None
+                    )
                 prioritization = parse_prioritization(ranking_response, document_ids)
                 prioritization_by_id = {item["id"]: item for item in prioritization}
                 for document in documents:
@@ -155,16 +165,38 @@ def run_s3_document_screening(
                 source = {"id": document["id"], "saved_as": document["saved_as"], "pages": []}
                 suffix = document_path.suffix.lower()
                 if suffix == ".pdf":
-                    pages = parse_pdf(document_path, output_directory / "rendered-pages", dpi=dpi)
+                    pages = parse_pdf(
+                        document_path,
+                        output_directory / "rendered-pages",
+                        dpi=dpi,
+                        image_format="jpeg",
+                        jpeg_quality=90,
+                        render_images=settings["include_attachments"],
+                    )
                     if not pages:
                         raise ValueError(f"Document {document['id']} contains no PDF pages.")
+                    omitted_visual_pages = []
                     for page in pages:
-                        attachments.append(page.image_path)
-                        source["pages"].append({
+                        page_source = {
                             "page_number": page.page_number,
                             "text": page.text,
-                            "attachment_number": len(attachments),
-                        })
+                        }
+                        if settings["include_attachments"] and (
+                            page.has_visual_content or not page.text.strip()
+                        ):
+                            if page.image_path is None:
+                                raise RuntimeError("PDF page image was not rendered for attachment.")
+                            attachments.append(page.image_path)
+                            page_source["attachment_number"] = len(attachments)
+                        elif page.has_visual_content:
+                            omitted_visual_pages.append(page.page_number)
+                        source["pages"].append(page_source)
+                    if omitted_visual_pages:
+                        preparation_warnings.append(
+                            f"Document {document['id']} has non-text visual content on PDF pages "
+                            f"{', '.join(map(str, omitted_visual_pages))}; those page images were "
+                            "not sent because include_attachments is false."
+                        )
                 elif suffix in {".docx", ".xlsx"}:
                     try:
                         if suffix == ".docx":
@@ -185,11 +217,44 @@ def run_s3_document_screening(
                 elif suffix in {".jpg", ".jpeg", ".png", ".webp"} or (
                     provider == "bedrock" and suffix == ".gif"
                 ):
-                    attachments.append(document_path)
-                    source["attachment_number"] = len(attachments)
-                elif provider == "bedrock" and suffix in {".csv", ".doc", ".xls", ".html", ".txt", ".md"}:
-                    attachments.append(document_path)
-                    source["attachment_number"] = len(attachments)
+                    if settings["include_attachments"]:
+                        attachments.append(document_path)
+                        source["attachment_number"] = len(attachments)
+                    else:
+                        warning = (
+                            f"Document {document['id']} ({document['saved_as']}) is an image and "
+                            "was not sent because include_attachments is false; no OCR was performed."
+                        )
+                        source["extraction_error"] = warning
+                        preparation_warnings.append(warning)
+                elif suffix in {".csv", ".doc", ".xls", ".html", ".txt", ".md", ".rtf"}:
+                    if settings["include_attachments"] and provider == "bedrock":
+                        attachments.append(document_path)
+                        source["attachment_number"] = len(attachments)
+                    elif settings["include_attachments"]:
+                        warning = (
+                            f"Document {document['id']} ({document['saved_as']}) has unsupported file "
+                            f"format {suffix} for {provider} and was not sent to the model."
+                        )
+                        source["extraction_error"] = warning
+                        preparation_warnings.append(warning)
+                    else:
+                        try:
+                            if suffix == ".doc":
+                                source["text"] = parse_doc(document_path)
+                            elif suffix == ".rtf":
+                                source["text"] = parse_rtf(document_path)
+                            elif suffix in {".csv", ".html", ".txt", ".md"}:
+                                source["text"] = document_path.read_text(encoding="utf-8")
+                            else:
+                                raise ValueError("No text extractor is available for this format.")
+                        except (OSError, UnicodeError, ValueError, RuntimeError) as error:
+                            warning = (
+                                f"Document {document['id']} ({document['saved_as']}) could not be "
+                                f"sent as text: {type(error).__name__}: {error}"
+                            )
+                            source["extraction_error"] = warning
+                            preparation_warnings.append(warning)
                 else:
                     warning = (
                         f"Document {document['id']} ({document['saved_as']}) has unsupported file format "
@@ -211,6 +276,11 @@ def run_s3_document_screening(
                     for document in documents
                 ],
             }
+            attachment_instructions = (
+                "Attachments follow in the numbered order recorded above. "
+                "PDF page images are attached only when a page contains non-text PDF objects "
+                "or has no extractable text. "
+            ) if attachments else "No file attachments are included. "
             prompt = (
                 "Application metadata and downloaded document evidence:\n"
                 + json.dumps({
@@ -218,9 +288,9 @@ def run_s3_document_screening(
                     "sources": sources,
                     "preparation_warnings": preparation_warnings,
                 }, ensure_ascii=False, indent=2)
-                + "\n\nAttachments follow in the numbered order recorded above. "
-                "PDF attachments are rendered page images. DOCX text and XLSX sheet/cell values "
-                "are included in the source JSON above."
+                + "\n\n" + attachment_instructions
+                + "Extracted text for all PDF pages is included above. "
+                "DOCX text and XLSX sheet/cell values are included in the source JSON above."
             )
             with LLMClient(model_config_path) as llm_client:
                 if context_limit is not None:
@@ -235,6 +305,10 @@ def run_s3_document_screening(
                 print("[document screening] Starting evidence screening.")
                 response = llm_client.generate(
                     prompt, system_prompt=system_prompt, attachments=attachments,
+                )
+                screening_usage = (
+                    llm_client.last_usage
+                    if isinstance(llm_client.last_usage, dict) else None
                 )
 
             try:
@@ -275,6 +349,11 @@ def run_s3_document_screening(
                 "prompt_path": str(prompt_path.resolve()),
                 "response": response,
             }
+            if provider == "bedrock":
+                result["usage"] = {
+                    "prioritization": prioritization_usage,
+                    "screening": screening_usage,
+                }
             result_name = f"{application_key}-prioritized-document-screening.json"
             final_output_name = f"{application_key}-prioritized-final-output.json"
             for name, payload in ((final_output_name, final_output), (result_name, result)):
