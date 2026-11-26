@@ -1,7 +1,7 @@
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+from typing import Literal, Optional, Union
 import pypdfium2 as pdfium
 from docx import Document
 from docx.text.paragraph import Paragraph
@@ -21,7 +21,8 @@ class ParsedPage:
     source_path: Path
     page_number: int
     text: str
-    image_path: Path
+    image_path: Optional[Path]
+    has_visual_content: bool = False
 
 
 def parse_pdf(
@@ -29,39 +30,62 @@ def parse_pdf(
     output_directory: Union[str, Path],
     *,
     dpi: int = 150,
+    image_format: Literal["png", "jpeg"] = "png",
+    jpeg_quality: int = 90,
+    render_images: bool = True,
 ) -> list[ParsedPage]:
-    """Extract text and save one PNG per page, returning pages in source order.
+    """Extract text and render pages, returning them in source order.
 
     Pages without an embedded text layer have empty text but are still rendered.
-    No OCR or layout reconstruction is performed. Existing images are never
-    overwritten. PDF and filesystem errors propagate; images written before
-    a later failure remain in the output directory.
+    ``has_visual_content`` indicates whether PDFium found any non-text page
+    objects. No OCR or layout reconstruction is performed. Existing images are
+    never overwritten. PDF and filesystem errors propagate; images written
+    before a later failure remain in the output directory.
     """
 
     if type(dpi) is not int or dpi <= 0:
         raise ValueError("dpi must be a positive integer.")
+    if image_format not in {"png", "jpeg"}:
+        raise ValueError("image_format must be 'png' or 'jpeg'.")
+    if type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 95:
+        raise ValueError("jpeg_quality must be an integer between 1 and 95.")
+    if type(render_images) is not bool:
+        raise ValueError("render_images must be true or false.")
     source_path = Path(pdf_path).resolve()
     output_directory = Path(output_directory).resolve()
     pages = []
 
     with pdfium.PdfDocument(source_path) as document:
         document.init_forms()
-        output_directory.mkdir(parents=True, exist_ok=True)
+        if render_images:
+            output_directory.mkdir(parents=True, exist_ok=True)
         for page_index in range(len(document)):
             page_number = page_index + 1
-            image_path = output_directory / f"{source_path.stem}-page-{page_number:04d}.png"
+            suffix = ".jpg" if image_format == "jpeg" else ".png"
+            image_path = output_directory / f"{source_path.stem}-page-{page_number:04d}{suffix}"
             with closing(document[page_index]) as page:
                 with closing(page.get_textpage()) as text_page:
                     text = text_page.get_text_bounded(errors="strict").replace("\r\n", "\n")
-                with closing(page.render(scale=dpi / 72, draw_annots=True)) as bitmap:
-                    with bitmap.to_pil() as image:
-                        with image_path.open("xb") as output:
-                            image.save(output, format="PNG")
+                has_visual_content = any(
+                    page_object.type != pdfium.raw.FPDF_PAGEOBJ_TEXT
+                    for page_object in page.get_objects()
+                )
+                if render_images:
+                    with closing(page.render(scale=dpi / 72, draw_annots=True)) as bitmap:
+                        with bitmap.to_pil() as image:
+                            with image_path.open("xb") as output:
+                                if image_format == "jpeg":
+                                    image.convert("RGB").save(
+                                        output, format="JPEG", quality=jpeg_quality, optimize=True,
+                                    )
+                                else:
+                                    image.save(output, format="PNG")
             pages.append(ParsedPage(
                 source_path=source_path,
                 page_number=page_number,
                 text=text,
-                image_path=image_path,
+                image_path=image_path if render_images else None,
+                has_visual_content=has_visual_content,
             ))
 
     return pages

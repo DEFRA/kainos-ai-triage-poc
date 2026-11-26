@@ -1,6 +1,7 @@
 """Synchronous generation with optional attachments through Ollama or Bedrock."""
 
 import base64
+import math
 import os
 import sys
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit
 
 import boto3
 import yaml
+from botocore.config import Config
 from dotenv import load_dotenv
 from openai import NOT_GIVEN, OpenAI
 from openai.types.chat import ChatCompletionContentPartParam, ChatCompletionMessageParam
@@ -64,6 +66,9 @@ class ModelConfig:
     aws_profile: Optional[str] = None
     max_output_tokens: int = 1500
     thinking_level: Optional[str] = None
+    connect_timeout_seconds: float = 10.0
+    read_timeout_seconds: float = 120.0
+    max_attempts: int = 1
 
     def __post_init__(self) -> None:
         for name in ("provider", "api_style", "model"):
@@ -86,6 +91,15 @@ class ModelConfig:
             )
         if type(self.max_output_tokens) is not int or self.max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be a positive integer.")
+        for name in ("connect_timeout_seconds", "read_timeout_seconds"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0
+            ):
+                raise ValueError(f"{name} must be a positive finite number.")
+        if type(self.max_attempts) is not int or self.max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer.")
         if self.thinking_level is not None and self.thinking_level not in (
             "low", "medium", "high"
         ):
@@ -140,6 +154,7 @@ class LLMClient:
         self.config = ModelConfig.from_yaml(config_path)
         self._ollama: Optional[OpenAI] = None
         self._bedrock = None
+        self.last_usage: Optional[dict[str, int]] = None
         if self.config.provider == "ollama":
             api_key_env = self.config.api_key_env or "OLLAMA_API_KEY"
             api_key = os.environ.get(api_key_env)
@@ -158,6 +173,14 @@ class LLMClient:
                 "bedrock-runtime",
                 region_name=self.config.region,
                 endpoint_url=self.config.base_url,
+                config=Config(
+                    connect_timeout=self.config.connect_timeout_seconds,
+                    read_timeout=self.config.read_timeout_seconds,
+                    retries={
+                        "mode": "standard",
+                        "total_max_attempts": self.config.max_attempts,
+                    },
+                ),
             )
 
     def generate(
@@ -177,6 +200,7 @@ class LLMClient:
         """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be a non-empty string.")
+        self.last_usage = None
         if system_prompt is not None and (
             not isinstance(system_prompt, str) or not system_prompt.strip()
         ):
@@ -284,8 +308,21 @@ class LLMClient:
                 inferenceConfig={"maxTokens": self.config.max_output_tokens},
                 **optional_fields,
             )
-            usage = result.get("usage") or {}
-            _set_usage_counts(usage_record, usage.get("inputTokens"), usage.get("outputTokens"))
+            usage = result.get("usage", {})
+            if isinstance(usage, dict):
+                _set_usage_counts(
+                    usage_record, usage.get("inputTokens"), usage.get("outputTokens")
+                )
+                usage_fields = {
+                    "input_tokens": "inputTokens",
+                    "output_tokens": "outputTokens",
+                    "total_tokens": "totalTokens",
+                }
+                if all(type(usage.get(key)) is int for key in usage_fields.values()):
+                    self.last_usage = {
+                        key: usage[source_key]
+                        for key, source_key in usage_fields.items()
+                    }
             if result["stopReason"] not in ("end_turn", "stop_sequence"):
                 raise RuntimeError(
                     "Bedrock did not return a complete answer "

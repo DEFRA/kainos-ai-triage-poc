@@ -98,6 +98,7 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self,
         *,
         include_maybe=False,
+        include_attachments=True,
         max_workers=2,
         default_polygon_area_square_metres=50_000,
     ):
@@ -106,6 +107,7 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
             "document_screening:\n"
             f"  max_concurrent_downloads: {max_workers}\n"
             f"  include_maybe: {str(include_maybe).lower()}\n"
+            f"  include_attachments: {str(include_attachments).lower()}\n"
             f"  default_polygon_area_square_metres: {default_polygon_area_square_metres}\n"
             "lpa:\n"
             "  request_interval_seconds: 0\n"
@@ -134,6 +136,7 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self.assertEqual(_load_implementation_config(config_path), {
             "max_concurrent_downloads": 2,
             "include_maybe": False,
+            "include_attachments": True,
             "default_polygon_area_square_metres": 50_000.0,
             "lpa_settings": {
                 "request_interval_seconds": 0,
@@ -146,17 +149,53 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
             },
         })
 
-    def test_prioritization_uncertainty_forces_must_and_invalid_output_raises(self):
+    def test_prioritization_uncertainty_preserves_priority_and_invalid_output_raises(self):
         uncertain = [{
             "id": "11", "priority": "skip", "uncertain": True,
             "reason": "The metadata is ambiguous.",
         }]
         parsed = _parse_prioritization(json.dumps({"documents": uncertain}), ["11"])
-        self.assertEqual(parsed[0]["priority"], "must")
+        self.assertEqual(parsed[0]["priority"], "skip")
+        self.assertTrue(parsed[0]["uncertain"])
         repaired = "Result: " + json.dumps({"documents": uncertain})[:-1] + ",}"
         self.assertEqual(_parse_prioritization(repaired, ["11"]), parsed)
-        with self.assertRaisesRegex(ValueError, "missing IDs"):
-            _parse_prioritization(repaired, ["11", "12"])
+        with self.assertRaisesRegex(ValueError, "unexpected IDs"):
+            _parse_prioritization(repaired, ["12"])
+
+    def test_missing_prioritization_defaults_to_uncertain_maybe(self):
+        response = {"documents": [
+            {"id": "11", "priority": "must", "uncertain": False, "reason": "Core document."},
+        ]}
+
+        parsed = _parse_prioritization(json.dumps(response), ["11", "12"])
+
+        self.assertEqual(parsed[1], {
+            "id": "12",
+            "priority": "maybe",
+            "uncertain": True,
+            "reason": "The model returned no prioritization for this document; defaulted to maybe.",
+            "missing_from_response": True,
+        })
+
+    def test_missing_prioritization_is_logged_in_metadata_and_not_downloaded_by_default(self):
+        self.llm.generate.side_effect = [
+            json.dumps({"documents": self.prioritization[:2]}),
+            json.dumps(self.findings),
+        ]
+
+        result = self.run_agent(self._write_config())
+
+        self.lpa.download_documents_concurrently.assert_called_once_with(
+            "KEY", self.metadata, self.output_directory, ["11"], max_workers=2
+        )
+        missing_document = result["metadata"]["documents"][2]
+        self.assertEqual(missing_document["priority"], "maybe")
+        self.assertTrue(missing_document["priority_uncertain"])
+        self.assertTrue(missing_document["priority_missing_from_response"])
+        self.assertEqual(
+            result["metadata"]["prioritization_warnings"][0]["document_ids"],
+            ["13"],
+        )
 
     def test_rank_download_extract_and_screen_only_must_documents(self):
         config_path = self._write_config(
@@ -207,6 +246,20 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self.assertIn("Starting document ranking", progress.getvalue())
         self.assertIn("Completed downloads: 1/1", progress.getvalue())
         self.assertIn("Completed output save", progress.getvalue())
+
+    def test_text_only_config_does_not_attach_pdf_pages(self):
+        config_path = self._write_config(include_attachments=False)
+
+        result = self.run_agent(config_path)
+
+        self.parser.assert_called_once_with(
+            self.output_directory / "11.pdf",
+            self.output_directory / "rendered-pages",
+            dpi=150,
+            render_images=False,
+        )
+        self.assertEqual(self.llm.generate.call_args_list[1].kwargs["attachments"], [])
+        self.assertNotIn("attachment_number", result["sources"][0]["pages"][0])
 
     def test_ignore_after_is_passed_as_a_function_parameter(self):
         cutoff = date(2026, 10, 21)
@@ -263,6 +316,21 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
         self.lpa.download_documents_concurrently.assert_called_once_with(
             "KEY", self.metadata, self.output_directory, ["11", "12"], max_workers=2
         )
+
+    def test_uncertain_skip_is_not_promoted_or_downloaded(self):
+        self.prioritization[2]["uncertain"] = True
+        self.llm.generate.side_effect = [
+            json.dumps({"documents": self.prioritization}),
+            json.dumps(self.findings),
+        ]
+
+        result = self.run_agent(self._write_config())
+
+        self.lpa.download_documents_concurrently.assert_called_once_with(
+            "KEY", self.metadata, self.output_directory, ["11"], max_workers=2
+        )
+        self.assertEqual(result["prioritization"][2]["priority"], "skip")
+        self.assertTrue(result["prioritization"][2]["uncertain"])
 
     def test_ranking_failure_stops_before_download(self):
         config_path = self._write_config()

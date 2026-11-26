@@ -107,6 +107,22 @@ class S3OrchestratorTests(unittest.TestCase):
                          "2025-01-02")
         self.mocks["save"].assert_called_with(self.s3, "bucket", "run-1", run, json_name="run.json")
 
+    def test_incomplete_development_is_forwarded_to_spatial_screening(self):
+        completeness = {
+            "complete": False,
+            "missing_fields": ["scale_and_type_of_development.residential"],
+            "incomplete_development_fields": ["scale_and_type_of_development.residential"],
+        }
+        self.mocks["document"].return_value["final_output"]["screening_completeness"] = completeness
+        self.mocks["spatial"].return_value["human_review_required"] = True
+
+        run = self.run_consultation()
+
+        context = self.mocks["spatial"].call_args.args[1]
+        self.assertEqual(context["document_screening"]["screening_completeness"], completeness)
+        self.assertTrue(run["stage_outputs"]["spatial_screening"]["human_review_required"])
+        self.assertEqual(run["errors"], [])
+
     def test_stage_model_configs_override_default(self):
         intake_model = self.config_path.parent / "intake.yaml"
         self.config_path.write_text(

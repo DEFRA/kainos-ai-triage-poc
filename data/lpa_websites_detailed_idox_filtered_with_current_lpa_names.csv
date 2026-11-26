@@ -8,7 +8,7 @@ ArdsNorthDown,https://planningregister.planningsystemni.gov.uk/simple-search,Ard
 Argyll,https://publicaccess.argyll-bute.gov.uk/online-applications/,Argyll and Bute
 ArmaghBanbridgeCraigavon,https://planningregister.planningsystemni.gov.uk/simple-search,"Armagh City, Banbridge and Craigavon"
 AylesburyVale,https://publicaccess.buckinghamshire.gov.uk/online-applications/,Buckinghamshire
-BaberghMidSuffolk,https://planning.baberghmidsuffolk.gov.uk/online-applications/,Babergh; Mid Suffolk
+BaberghMidSuffolk,https://planning.baberghmidsuffolk.gov.uk/online-applications/,Babergh and Mid Suffolk District Councils
 Barking,https://online-befirst.lbbd.gov.uk/planning/index.html?fa=search,Barking and Dagenham
 Barnet,https://publicaccess.barnet.gov.uk/online-applications/,Barnet
 Basildon,https://planning.basildon.gov.uk/online-applications/,Basildon
@@ -39,7 +39,7 @@ Calderdale,https://portal.calderdale.gov.uk/online-applications/,Calderdale
 Cambridge,https://applications.greatercambridgeplanning.org/online-applications/,Cambridge
 Canterbury,https://pa.canterbury.gov.uk/online-applications/,Canterbury
 Cardiff,https://www.cardiffidoxcloud.wales/publicaccess/,Cardiff
-Carlisle,http://publicaccess.carlisle.gov.uk/online-applications/,Cumberland
+Carlisle,https://publicaccess.carlisle.gov.uk/online-applications/,Cumberland
 CastlePoint,https://publicaccess.castlepoint.gov.uk/online-applications/,Castle Point
 CausewayGlens,https://planningregister.planningsystemni.gov.uk/simple-search,Causeway Coast and Glens
 Chelmsford,https://publicaccess.chelmsford.gov.uk/online-applications/,Chelmsford
@@ -53,13 +53,13 @@ Chorley,https://planning.chorley.gov.uk/online-applications/,Chorley
 City,https://www.planning2.cityoflondon.gov.uk/online-applications/,City of London
 Clackmannanshire,https://publicaccess.clacks.gov.uk/publicaccess/,Clackmannanshire
 Corby,https://publicaccess.corby.gov.uk/publicaccess/,North Northamptonshire
-Cornwall,http://planning.cornwall.gov.uk/online-applications/,Cornwall
+Cornwall,https://planning.cornwall.gov.uk/online-applications/,Cornwall
 Cotswold,http://publicaccess.cotswold.gov.uk/online-applications/,Cotswold
 CountyDurham,https://publicaccess.durham.gov.uk/online-applications/,County Durham
 Craven,https://publicaccess.northyorks.gov.uk/online-applications/,North Yorkshire
 Croydon,https://publicaccess3.croydon.gov.uk/online-applications/,Croydon
 Dacorum,https://planning.dacorum.gov.uk/publicaccess/,Dacorum
-Dartford,http://publicaccess.dartford.gov.uk/online-applications/,Dartford
+Dartford,https://publicaccess.dartford.gov.uk/online-applications/,Dartford
 Derby,https://eplanning.derby.gov.uk/online-applications/,Derby
 DerbyshireDales,https://planning.derbyshiredales.gov.uk/online-applications/,Derbyshire Dales
 DerryStrabane,https://planningregister.planningsystemni.gov.uk/simple-search,Derry City and Strabane
@@ -72,7 +72,7 @@ EastAyrshire,http://eplanning.east-ayrshire.gov.uk/online/,East Ayrshire
 EastCambridgeshire,http://pa.eastcambs.gov.uk/online-applications/,East Cambridgeshire
 EastDevon,https://planning.eastdevon.gov.uk/online-applications/,East Devon
 EastDunbartonshire,https://planning.eastdunbarton.gov.uk/online-applications/,East Dunbartonshire
-EastHampshire,http://planningpublicaccess.easthants.gov.uk/online-applications/,East Hampshire
+EastHampshire,https://planningpublicaccess.easthants.gov.uk/online-applications/,East Hampshire
 EastHertfordshire,https://publicaccess.eastherts.gov.uk/online-applications/,East Hertfordshire
 EastLindsey,http://publicaccess.e-lindsey.gov.uk/online-applications/,East Lindsey
 EastLothian,https://pa.eastlothian.gov.uk/online-applications/,East Lothian
@@ -102,11 +102,11 @@ Hambleton,https://publicaccess.northyorks.gov.uk/online-applications/,North York
 Hammersmith,https://public-access.lbhf.gov.uk/online-applications/,Hammersmith and Fulham
 Harborough,https://pa2.harborough.gov.uk/online-applications/,Harborough
 Harlow,https://planningonline.harlow.gov.uk/online-applications/,Harlow
-Harrogate,https://www.northyorks.gov.uk/welcome-north-yorkshire-council,North Yorkshire
+Harrogate,https://publicaccess.northyorks.gov.uk/online-applications/,North Yorkshire
 Hart,https://publicaccess.hart.gov.uk/online-applications/,Hart
 Hastings,https://publicaccess.hastings.gov.uk/online-applications/,Hastings
 Havant,https://service.havant.gov.uk/pr/s/register-view?c__r=Arcus_BE_Public_Register,Havant
-Hertsmere,http://www6.hertsmere.gov.uk/online-applications/,Hertsmere
+Hertsmere,https://www6.hertsmere.gov.uk/online-applications/,Hertsmere
 Highland,https://wam.highland.gov.uk/wam/,Highland
 Hinckley,https://pa.hinckley-bosworth.gov.uk/online-applications/,Hinckley and Bosworth
 Horsham,https://public-access.horsham.gov.uk/public-access/,Horsham
@@ -128,24 +128,24 @@ Luton,https://planning.luton.gov.uk/online-applications/,Luton
 Maldon,https://publicaccess.maldon.gov.uk/online-applications/,Maldon
 Manchester,https://arcusbe.manchester.gov.uk/pr/s/register-view?c__r=Arcus_BE_Public_Register,Manchester
 Mansfield,https://planning.mansfield.gov.uk/online-applications/,Mansfield
-Medway,https://planning.baberghmidsuffolk.gov.uk/online-applications/,Medway
+Medway,https://publicaccess1.medway.gov.uk/online-applications/,Medway
 Melton,https://pa.melton.gov.uk/online-applications/,Melton
 Mendip,https://publicaccess.mendip.gov.uk/online-applications/,Somerset
 MerthyrTydfil,https://publicaccess.merthyr.gov.uk/online-applications/,Merthyr Tydfil
 MidDevon,https://planning.middevon.gov.uk/online-applications/,Mid Devon
+Middlesbrough,https://planning.agileapplications.co.uk/middlesbrough,Middlesbrough
 MidEastAntrim,https://planningregister.planningsystemni.gov.uk/simple-search,Mid and East Antrim
 MidKent,https://pa.midkent.gov.uk/online-applications/,Maidstone; Swale
+Midlothian,https://planning-applications.midlothian.gov.uk/OnlinePlanning/,Midlothian
 MidSussex,https://pa.midsussex.gov.uk/online-applications/,Mid Sussex
 MidUlster,https://planning.midulstercouncil.org/online-applications/,Mid Ulster
-Middlesbrough,https://planning.agileapplications.co.uk/middlesbrough,Middlesbrough
-Midlothian,https://planning-applications.midlothian.gov.uk/OnlinePlanning/,Midlothian
 MiltonKeynes,https://www.milton-keynes.gov.uk/planning-and-building/planning-applications-apply-pay-and-comment/view-and-comment-planning,Milton Keynes
 Moray,https://publicaccess.moray.gov.uk/eplanning/,Moray
-NewForest,https://planning.newforest.gov.uk/online-applications/,New Forest
-NewForestPark,https://planning.agileapplications.co.uk/nfnpa/,New Forest National Park
 Newark,https://publicaccess.newark-sherwooddc.gov.uk/online-applications/,Newark and Sherwood
 NewcastleUnderLyme,https://publicaccess.newcastle-staffs.gov.uk/online-applications/,Newcastle-under-Lyme
 NewcastleUponTyne,https://publicaccessapplications.newcastle.gov.uk/online-applications/,Newcastle upon Tyne
+NewForest,https://planning.newforest.gov.uk/online-applications/,New Forest
+NewForestPark,https://planning.agileapplications.co.uk/nfnpa/,New Forest National Park
 Newham,https://pa.newham.gov.uk/online-applications/,Newham
 NewryMourneDown,https://planningregister.planningsystemni.gov.uk/simple-search,"Newry, Mourne and Down"
 NorthAyrshire,http://www.eplanning.north-ayrshire.gov.uk/OnlinePlanning/,North Ayrshire
@@ -157,8 +157,8 @@ NorthKesteven,https://planningonline.n-kesteven.gov.uk/online-applications/,Nort
 NorthLanarkshire,https://eplanning.northlanarkshire.gov.uk/online-applications/,North Lanarkshire
 NorthNorfolk,https://idoxpa.north-norfolk.gov.uk/online-applications/,North Norfolk
 NorthTyneside,http://idoxpublicaccess.northtyneside.gov.uk/online-applications/,North Tyneside
-NorthWestLeicestershire,https://plans.nwleics.gov.uk/public-access/,North West Leicestershire
 Northumberland,https://publicaccess.northumberland.gov.uk/online-applications/,Northumberland
+NorthWestLeicestershire,https://plans.nwleics.gov.uk/public-access/,North West Leicestershire
 Norwich,https://planning.norwich.gov.uk/online-applications/,Norwich
 Nottingham,https://publicaccess.nottinghamcity.gov.uk/online-applications/,Nottingham
 Oadby,https://pa.oadby-wigston.gov.uk/online-applications/,Oadby and Wigston
@@ -174,12 +174,12 @@ Portsmouth,https://publicaccess.portsmouth.gov.uk/online-applications/,Portsmout
 Reigate,https://planning.reigate-banstead.gov.uk:443/online-applications/,Reigate and Banstead
 Renfrewshire,https://pl-bs.renfrewshire.gov.uk/online-applications/,Renfrewshire
 Rhondda,http://planning.rctcbc.gov.uk/online-applications/,Rhondda Cynon Taf
-Richmondshire,https://planning.richmondshire.gov.uk/online-applications/,North Yorkshire
+Richmondshire,https://publicaccess.northyorks.gov.uk/online-applications/,North Yorkshire
 Rochdale,https://publicaccess.rochdale.gov.uk/online-applications/,Rochdale
 Rossendale,https://publicaccess.rossendale.gov.uk/online-applications/,Rossendale
 Rushcliffe,https://planningon-line.rushcliffe.gov.uk/online-applications/,Rushcliffe
 Rushmoor,http://publicaccess.rushmoor.gov.uk/online-applications/,Rushmoor
-Ryedale,https://planningregister.ryedale.gov.uk/caonline-applications/,North Yorkshire
+Ryedale,https://publicaccess.northyorks.gov.uk/online-applications/,North Yorkshire
 Salford,http://publicaccess.salford.gov.uk/publicaccess/,Salford
 Sandwell,https://webcaps.sandwell.gov.uk/publicaccess/,Sandwell
 Scarborough,https://publicaccess.northyorks.gov.uk/online-applications/,North Yorkshire
@@ -192,19 +192,19 @@ Shepway,https://folkestonehythedc.my.site.com/PR3/s/be-register-view?c__r=Arcus_
 Shetland,https://pa.shetland.gov.uk:443/online-applications/,Shetland Islands
 Shropshire,https://pa.shropshire.gov.uk/online-applications/,Shropshire
 Solihull,https://publicaccess.solihull.gov.uk/online-applications/,Solihull
+Southampton,https://planningpublicaccess.southampton.gov.uk/online-applications/,Southampton
 SouthAyrshire,https://publicaccess.south-ayrshire.gov.uk/online-applications/,South Ayrshire
 SouthBucks,https://publicaccess.buckinghamshire.gov.uk/online-applications/,Buckinghamshire
 SouthDowns,https://planningpublicaccess.southdowns.gov.uk/online-applications/,South Downs National Park
+Southend,https://publicaccess.southend.gov.uk/online-applications/,Southend-on-Sea
 SouthGloucestershire,http://developments.southglos.gov.uk/online-applications/,South Gloucestershire
 SouthNorfolk,https://info.southnorfolkandbroadland.gov.uk/online-applications/,South Norfolk
 SouthRibble,https://publicaccess.southribble.gov.uk/online-applications/,South Ribble
 SouthStaffordshire,https://planning.sstaffs.gov.uk/online-applications/,South Staffordshire
-Southampton,https://planningpublicaccess.southampton.gov.uk/online-applications/,Southampton
-Southend,https://publicaccess.southend.gov.uk/online-applications/,Southend-on-Sea
 Southwark,https://planning.southwark.gov.uk/online-applications/,Southwark
-StHelens,https://publicaccess.sthelens.gov.uk/online-applications/,St. Helens
 Stafford,https://www12.staffordbc.gov.uk/online-applications/,Stafford
 Stevenage,https://publicaccess.stevenage.gov.uk/online-applications/,Stevenage
+StHelens,https://publicaccess.sthelens.gov.uk/online-applications/,St. Helens
 Stirling,http://pabs.stirling.gov.uk/online-applications/,Stirling
 Stockport,https://planning.stockport.gov.uk/PlanningData-live/,Stockport
 Stockton,https://www.developmentmanagement.stockton.gov.uk/online-applications/,Stockton-on-Tees
@@ -231,13 +231,13 @@ Warwick,http://planningdocuments.warwickdc.gov.uk/online-applications/,Warwick
 Watford,https://pa.watford.gov.uk/publicaccess/,Watford
 Wellingborough,https://publicaccess.northnorthants.gov.uk/online-applications/,North Northamptonshire
 WestBerkshire,https://publicaccess.westberks.gov.uk/online-applications/,West Berkshire
+WesternIsles,https://planning.cne-siar.gov.uk/PublicAccess/,Na h-Eileanan Siar
 WestLancashire,https://pa.westlancs.gov.uk/online-applications/,West Lancashire
 WestLothian,https://planning.westlothian.gov.uk/publicaccess/,West Lothian
+Westminster,https://idoxpa.westminster.gov.uk/online-applications/,Westminster
 WestOxfordshire,https://publicaccess.westoxon.gov.uk/online-applications/,West Oxfordshire
 WestSomerset,https://www3.somersetwestandtaunton.gov.uk/asp/webpages/plan/plapplookup.asp,Somerset
 WestSuffolk,https://planning.westsuffolk.gov.uk/online-applications/,West Suffolk
-WesternIsles,https://planning.cne-siar.gov.uk/PublicAccess/,Na h-Eileanan Siar
-Westminster,https://idoxpa.westminster.gov.uk/online-applications/,Westminster
 Winchester,https://planningapps.winchester.gov.uk/online-applications/,Winchester
 Windsor,https://publicaccess.rbwm.gov.uk/online-applications/,Windsor and Maidenhead
 Wirral,https://online.wirral.gov.uk/planning/index.html?fa=search,Wirral
@@ -246,3 +246,6 @@ Wolverhampton,https://planningonline.wolverhampton.gov.uk/online-applications/,W
 Wycombe,https://publicaccess.buckinghamshire.gov.uk/online-applications/,Buckinghamshire
 Wyre,https://publicaccess.wyre.gov.uk/online-applications/,Wyre
 York,https://planningaccess.york.gov.uk/online-applications/,York
+SouthKesteven,https://prod.publicaccess.southkesteven.gov.uk/online-applications/search.do?action=simple&searchType=Application,South Kesteven
+Spelthorne,https://publicaccess.spelthorne.gov.uk/online-applications/,Spelthorne
+Stroud,https://publicaccess.stroud.gov.uk/online-applications/,Stroud

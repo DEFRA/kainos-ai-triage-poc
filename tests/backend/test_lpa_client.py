@@ -130,6 +130,43 @@ class PublicAccessClientTests(unittest.TestCase):
             self.client._request("GET", BASE_URL)
         self.sleep.assert_not_called()
 
+    def test_connection_errors_retry_then_succeed(self):
+        with patch.object(self.client.session, "request", side_effect=[
+            requests.ConnectionError("connection reset"),
+            requests.Timeout("timed out"),
+            response("ok"),
+        ]) as request:
+            result = self.client._request("GET", BASE_URL)
+
+        self.assertEqual(result.content, b"ok")
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [3, 6])
+
+    def test_connection_errors_stop_after_configured_retry_limit(self):
+        self.client._max_retries = 2
+        self.client._retry_increment = 1
+        with patch.object(self.client.session, "request", side_effect=
+            requests.ConnectionError("connection reset")
+        ) as request:
+            with self.assertRaisesRegex(requests.ConnectionError, "connection reset"):
+                self.client._request("GET", BASE_URL)
+
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [1, 2])
+
+    def test_transient_server_errors_retry_but_other_client_errors_do_not(self):
+        with patch.object(self.client.session, "request", side_effect=[
+            response("", status=503), response("ok"),
+        ]) as request:
+            self.assertEqual(self.client._request("GET", BASE_URL).content, b"ok")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [3])
+
+        with patch.object(self.client.session, "request", return_value=response("", status=404)) as request:
+            with self.assertRaises(requests.HTTPError):
+                self.client._request("GET", BASE_URL)
+        request.assert_called_once()
+
     def test_429_increments_pacing_and_retains_it_after_success(self):
         with patch.object(self.client.session, "request", side_effect=[
             response("", status=429), response("", status=429),
@@ -228,8 +265,8 @@ class PublicAccessClientTests(unittest.TestCase):
 
         self.assertEqual(settings, {
             "request_interval_seconds": 0,
-            "retry_increment_seconds": 0,
-            "max_retries": 0,
+            "retry_increment_seconds": 2,
+            "max_retries": 3,
             "max_wait_seconds": 60,
             "refresh_session_on_429": True,
             "session_refresh_wait_seconds": 60,

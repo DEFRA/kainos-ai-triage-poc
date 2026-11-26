@@ -142,6 +142,34 @@ class S3SpatialAgentTests(unittest.TestCase):
 
 		self.assertEqual(self.context, original_context)
 
+	def test_incomplete_development_requires_review_even_with_high_confidence(self):
+		self.context["document_screening"] = {
+			"screening_completeness": {
+				"complete": False,
+				"missing_fields": ["scale_and_type_of_development.residential"],
+				"incomplete_development_fields": ["scale_and_type_of_development.residential"],
+			},
+		}
+		response = json.loads(self.response)
+		for answer in response["answers"]:
+			answer["confidence"] = "High"
+		self.response = json.dumps(response)
+		llm, _intersect, _irz = self._patch_pipeline(S3_MODULE)
+
+		result = self._run()
+
+		self.assertTrue(result["human_review_required"])
+		self.assertFalse(any(answer["human_review_required"] for answer in result["answers"]))
+		self.assertIn("scale_and_type_of_development.residential", llm.generate.call_args.args[0])
+		stored = json.loads(self.s3.put_object.call_args.kwargs["Body"])
+		self.assertTrue(stored["human_review_required"])
+
+		self._patch_pipeline(IRZ_MODULE)
+		local_result = irz_code_agent.run_irz_code_spatial_screening(
+			POLYGON, self.context, "model.yaml", implementation_config_path=self.config_path,
+		)
+		self.assertTrue(local_result["human_review_required"])
+
 	def test_urban_threshold_classifies_coverage_as_rural_below_threshold(self):
 		llm, _intersect, _irz = self._patch_pipeline(S3_MODULE, coverage=49.9)
 
@@ -193,6 +221,24 @@ class S3SpatialAgentTests(unittest.TestCase):
 			self._run()
 
 		self.s3.put_object.assert_not_called()
+
+	def test_invalid_answer_response_is_saved_before_validation_error_is_raised(self):
+		llm, _intersect, _irz = self._patch_pipeline(S3_MODULE)
+		invalid_response = json.loads(self.response)
+		invalid_response["answers"][0]["unexpected"] = "extra field"
+		llm.generate.return_value = json.dumps(invalid_response)
+
+		with self.assertRaisesRegex(
+			ValueError,
+			"Each IRZ answer must contain the required answer fields only.*"
+			"s3://screening-bucket/case-1/run-1/spatial-screening-response.txt",
+		):
+			self._run()
+
+		self.s3.put_object.assert_called_once()
+		kwargs = self.s3.put_object.call_args.kwargs
+		self.assertEqual(kwargs["Key"], "case-1/run-1/spatial-screening-response.txt")
+		self.assertEqual(kwargs["Body"], json.dumps(invalid_response).encode("utf-8"))
 
 	def test_module_does_not_import_irz_code_agent(self):
 		source_path = Path(irz_code_agent.__file__).with_name("s3_spatial_agent.py")

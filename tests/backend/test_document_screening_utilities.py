@@ -61,6 +61,84 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
             [],
         )
 
+    def test_accepts_descriptive_fields_with_missing_or_nullable_details(self):
+        findings = valid_document_findings()
+        field = findings["location"]["site_address"]
+        field.update(confidence="null", evidence=[{"document_id": None, "quote": "Address"}])
+        field.pop("reason")
+        field["extra"] = "retained"
+
+        parsed = parse_document_findings(json.dumps(findings))
+
+        self.assertIsNone(parsed["location"]["site_address"]["confidence"])
+        self.assertIsNone(parsed["location"]["site_address"]["evidence"][0]["document_id"])
+        self.assertEqual(parsed["location"]["site_address"]["extra"], "retained")
+        self.assertIn("location.site_address.evidence.document_id", parsed["screening_completeness"]["missing_fields"])
+
+    def test_preserves_nullable_designated_site_details(self):
+        findings = valid_document_findings()
+        findings["site_and_surroundings"]["designated_sites_mentioned"] = [{
+            "name": None,
+            "type": "SSSI",
+            "evidence": [{"document_id": None, "quote": "SSSI"}],
+        }]
+
+        parsed = parse_document_findings(json.dumps(findings))
+
+        self.assertIsNone(parsed["site_and_surroundings"]["designated_sites_mentioned"][0]["name"])
+        self.assertIsNone(parsed["site_and_surroundings"]["designated_sites_mentioned"][0]["evidence"][0]["document_id"])
+
+    def test_records_missing_development_and_other_sections_without_inventing_values(self):
+        findings = valid_document_findings()
+        del findings["scale_and_type_of_development"]
+        del findings["limitations"]
+
+        parsed = parse_document_findings(json.dumps(findings))
+
+        self.assertNotIn("scale_and_type_of_development", parsed)
+        self.assertNotIn("limitations", parsed)
+        self.assertEqual(parsed["screening_completeness"], {
+            "complete": False,
+            "missing_fields": ["limitations", "scale_and_type_of_development"],
+            "incomplete_development_fields": ["scale_and_type_of_development"],
+        })
+
+    def test_records_incomplete_development_field(self):
+        findings = valid_document_findings()
+        del findings["scale_and_type_of_development"]["residential"]["value"]
+
+        parsed = parse_document_findings(json.dumps(findings))
+
+        self.assertNotIn("value", parsed["scale_and_type_of_development"]["residential"])
+        self.assertEqual(parsed["screening_completeness"]["incomplete_development_fields"],
+                         ["scale_and_type_of_development.residential"])
+
+    def test_records_uncertain_or_inconsistent_development_values(self):
+        for status, value in (("stated", " "), ("unclear", None), ("conflicting", None), ("not_stated", "None")):
+            with self.subTest(status=status, value=value):
+                findings = valid_document_findings()
+                findings["scale_and_type_of_development"]["residential"].update(status=status, value=value)
+                parsed = parse_document_findings(json.dumps(findings))
+                self.assertIn("scale_and_type_of_development.residential",
+                              parsed["screening_completeness"]["incomplete_development_fields"])
+
+    def test_normalizes_string_null_in_descriptive_field_value(self):
+        findings = valid_document_findings()
+        findings["scale_and_type_of_development"]["residential"]["value"] = "null"
+        parsed = parse_document_findings(json.dumps(findings))
+        self.assertIsNone(parsed["scale_and_type_of_development"]["residential"]["value"])
+
+    def test_rejects_missing_or_invalid_decision_signals(self):
+        for invalid_signal in (None, {"classification": "unknown", "confidence": "high", "reason": "", "evidence": []}):
+            with self.subTest(invalid_signal=invalid_signal):
+                findings = valid_document_findings()
+                if invalid_signal is None:
+                    del findings["consultation_type_signals"]["amendment"]
+                else:
+                    findings["consultation_type_signals"]["amendment"] = invalid_signal
+                with self.assertRaises(ValueError):
+                    parse_document_findings(json.dumps(findings))
+
     def test_normalizes_numeric_coordinate_strings(self):
         findings = valid_document_findings()
         findings["location"]["coordinates"]["easting"] = "359926"
