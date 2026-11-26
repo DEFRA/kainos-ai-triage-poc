@@ -23,10 +23,23 @@ data/emails/
 data/mock_rds_tables/
 frontend/prototyping
 
+# Terraform working directories, state, and saved plans
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.plan
+*.tfvars
+!*.tfvars.example
+
 # Local model configuration, except example placeholders
 environment/model_configs/*
 !environment/model_configs/bedrock-placeholder.yaml
 !environment/model_configs/ollama-placeholder.yaml
+
+# Personal directory
+personal/
 
 # Other local files and directories
 .DS_Store

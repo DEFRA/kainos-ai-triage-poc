@@ -1,0 +1,7 @@
+allowed_state_principal_arns = [
+  "arn:aws:iam::<account-id>:user/<iam-user>",
+]
+
+allowed_deployer_principal_arns = [
+  "arn:aws:iam::<account-id>:user/<iam-user>",
+]
