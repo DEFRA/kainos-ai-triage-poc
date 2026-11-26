@@ -1,3 +1,12 @@
+data "aws_ecr_image" "ui" {
+  repository_name = var.ui_image_repository
+  image_tag       = var.ui_image_tag
+}
+
+locals {
+  ui_container_image = "${data.aws_ecr_image.ui.registry_id}.dkr.ecr.eu-west-2.amazonaws.com/${var.ui_image_repository}@${data.aws_ecr_image.ui.image_digest}"
+}
+
 resource "aws_ecs_cluster" "poc" {
   name = "ne-triage-poc"
 
@@ -27,7 +36,7 @@ resource "aws_ecs_task_definition" "ui" {
   container_definitions = jsonencode([
     {
       name      = "ui"
-      image     = var.ui_container_image
+      image     = local.ui_container_image
       essential = true
 
       # ECS reads the RDS-managed password at task start; restart the service after any rotation.

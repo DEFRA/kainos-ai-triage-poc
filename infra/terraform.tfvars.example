@@ -7,7 +7,8 @@ alb_subnet_ids = [
 
 ecs_subnet_id = "subnet-xxxxxxxxxxxxxxxxx"
 
-ui_container_image = "<account-id>.dkr.ecr.eu-west-2.amazonaws.com/<repository>@sha256:<digest>"
+# ui_image_tag = "latest"  # resolved to a digest at plan time
+alert_emails = ["someone@example.com"]
 
 enable_frontend_rds         = true
 frontend_rds_instance_class = "db.t4g.small"
