@@ -39,6 +39,38 @@ def qc_thread(consultation_id: str, root_body: str, reviewer_note: str) -> str:
 
 
 class CleanConsultationEmailTests(unittest.TestCase):
+    def test_non_idox_removal_is_optional_and_logged(self):
+        """Check optional non-Idox removal, logging, and preservation of other folders."""
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as temporary_directory:
+                root = Path(temporary_directory)
+                input_root = root / "input"
+                output_root = root / "cleaned"
+                for case_id in ("543175", "540324"):
+                    folder = input_root / case_id
+                    folder.mkdir(parents=True)
+                    message = make_email(
+                        f"QC {case_id}", qc_thread(case_id, "Original consultation", "review note"),
+                        [("plan.pdf", b"plan")],
+                    )
+                    (folder / f"{case_id} QC.eml").write_bytes(message.as_bytes(policy=policy.default))
+
+                with (
+                    patch.object(cleaner, "INPUT_ROOT", input_root),
+                    patch.object(cleaner, "OUTPUT_ROOT", output_root),
+                    patch.object(cleaner, "LOG_PATH", output_root / "preprocessing_log.csv"),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    cleaner.main(remove_non_idox_enabled=enabled)
+
+                self.assertEqual((output_root / "543175").exists(), not enabled)
+                self.assertTrue((output_root / "540324" / "540324 clean.eml").exists())
+                with (output_root / "preprocessing_log.csv").open(encoding="utf-8", newline="") as file:
+                    rows = {row["consultation_id"]: row for row in csv.DictReader(file)}
+                self.assertEqual(rows["543175"]["status"], "skipped" if enabled else "ok")
+                if enabled:
+                    self.assertIn("non-Idox website", rows["543175"]["note"])
+
     def test_original_email_body_excludes_qc_thread(self):
         message = make_email("QC 123456", qc_thread("123456", "Original consultation", "internal note"))
 
