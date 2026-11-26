@@ -125,8 +125,6 @@ resource "aws_ecs_service" "ui" {
     aws_iam_role_policy_attachment.ui_execution_logs,
     aws_iam_role_policy.ui_execution_db_secret,
     aws_iam_role_policy_attachment.ui_task_bedrock,
-    aws_route_table_association.ecs,
-    aws_vpc_endpoint.s3,
     aws_vpc_endpoint.ui_interface,
   ]
 
