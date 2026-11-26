@@ -1,0 +1,15 @@
+vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
+
+alb_subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx",
+  "subnet-yyyyyyyyyyyyyyyyy",
+]
+
+ecs_subnet_id = "subnet-xxxxxxxxxxxxxxxxx"
+
+ui_container_image = "<account-id>.dkr.ecr.eu-west-2.amazonaws.com/<repository>@sha256:<digest>"
+
+enable_frontend_rds         = true
+frontend_rds_instance_class = "db.t4g.small"
+
+alb_certificate_arn = "arn:aws:acm:eu-west-2:<account-id>:certificate/<certificate-id>"

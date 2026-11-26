@@ -22,6 +22,19 @@ data/OS_Open_Built_Up_Areas_GeoPackage/
 .github/
 notebooks/
 
+# Terraform working directories, state, and saved plans
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.plan
+*.tfvars
+!*.tfvars.example
+
 environment/model_configs/*
 !environment/model_configs/bedrock-placeholder.yaml
 !environment/model_configs/ollama-placeholder.yaml
+
+# Personal directory
+personal/
