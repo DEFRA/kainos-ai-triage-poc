@@ -154,6 +154,11 @@ def run_s3_spatial_screening(
 	print("[spatial screening] Starting IRZ answer validation.")
 	answers = parse_irz_category_answers(response, categories)
 	human_review_required = apply_human_review_flags(answers, human_review_threshold)
+	document_screening = context.get("document_screening")
+	if isinstance(document_screening, dict):
+		completeness = document_screening.get("screening_completeness")
+		if isinstance(completeness, dict) and completeness.get("incomplete_development_fields"):
+			human_review_required = True
 	print(
 		f"[spatial screening] Completed IRZ answer validation: "
 		f"{len(answers)} answers, "

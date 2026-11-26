@@ -231,21 +231,12 @@ def _validate_evidence(value: object, label: str) -> None:
 
 
 def _validate_field(value: object, label: str) -> None:
-    field = _require_mapping(value, _FIELD_KEYS, label)
-    if field["value"] is not None and not isinstance(field["value"], str):
-        raise ValueError(f"{label} value must be a string or null.")
-    if not isinstance(field["status"], str) or field["status"] not in {
-        "stated", "not_stated", "conflicting", "unclear"
-    }:
-        raise ValueError(f"{label} has an invalid status.")
-    if field["confidence"] is not None and (
-        not isinstance(field["confidence"], str)
-        or field["confidence"] not in _CONFIDENCE_LEVELS
-    ):
-        raise ValueError(f"{label} has an invalid confidence.")
-    if not isinstance(field["reason"], str):
-        raise ValueError(f"{label} reason must be a string.")
-    _validate_evidence(field["evidence"], f"{label} evidence")
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object.")
+    for key in ("value", "confidence"):
+        field_value = value.get(key)
+        if isinstance(field_value, str) and field_value.strip().casefold() == "null":
+            value[key] = None
 
 
 def _validate_signal(value: object, label: str) -> None:
@@ -276,30 +267,16 @@ def parse_document_findings(response: str) -> dict[str, object]:
     if not isinstance(findings, dict):
         raise ValueError("Model response must be a JSON object.")
 
-    missing_keys = _DOCUMENT_FINDING_KEYS - findings.keys()
-    unexpected_keys = findings.keys() - _DOCUMENT_FINDING_KEYS
-    if missing_keys or unexpected_keys:
-        details = []
-        if missing_keys:
-            details.append("missing keys: " + ", ".join(sorted(missing_keys)))
-        if unexpected_keys:
-            details.append("unexpected keys: " + ", ".join(sorted(unexpected_keys)))
-        raise ValueError("Model response has an invalid top-level structure (" + "; ".join(details) + ").")
+    signals = findings.get("consultation_type_signals")
+    decision_signals = ("amendment", "minerals_waste_existing", "minerals_waste_new")
+    if not isinstance(signals, dict) or any(name not in signals for name in decision_signals):
+        raise ValueError("Model response has an invalid top-level structure or missing decision signals.")
+    for name in decision_signals:
+        _validate_signal(signals[name], f"consultation_type_signals.{name}")
 
-    signals = _require_mapping(
-        findings["consultation_type_signals"],
-        _CONSULTATION_SIGNAL_KEYS,
-        "consultation_type_signals",
-    )
-    for name, signal in signals.items():
-        _validate_signal(signal, f"consultation_type_signals.{name}")
-
-    location = _require_mapping(
-        findings["location"],
-        {"coordinates", "site_address", "site_area"},
-        "location",
-    )
-    coordinates = location["coordinates"]
+    incomplete_fields = sorted(_DOCUMENT_FINDING_KEYS - findings.keys())
+    location = findings.get("location")
+    coordinates = location.get("coordinates") if isinstance(location, dict) else None
     if isinstance(coordinates, dict):
         for key in ("easting", "northing"):
             coordinate = coordinates.get(key)
@@ -310,81 +287,42 @@ def parse_document_findings(response: str) -> dict[str, object]:
                     continue
                 if math.isfinite(coordinate):
                     coordinates[key] = int(coordinate) if coordinate.is_integer() else coordinate
-    _validate_field(location["site_address"], "location.site_address")
-    _validate_field(location["site_area"], "location.site_area")
+    for section_name in ("location", "site_and_surroundings", "agricultural_land", "scale_and_type_of_development"):
+        section = findings.get(section_name)
+        if isinstance(section, dict):
+            for name, field in section.items():
+                if isinstance(field, dict) and name != "coordinates":
+                    _validate_field(field, f"{section_name}.{name}")
+                    evidence = field.get("evidence")
+                    if isinstance(evidence, list) and any(
+                        not isinstance(item, dict) or not isinstance(item.get("document_id"), str)
+                        for item in evidence
+                    ):
+                        incomplete_fields.append(f"{section_name}.{name}.evidence.document_id")
 
-    surroundings = _require_mapping(
-        findings["site_and_surroundings"],
-        {"existing_use", "greenfield_or_brownfield", "features_affected", "designated_sites_mentioned"},
-        "site_and_surroundings",
-    )
-    for name in ("existing_use", "greenfield_or_brownfield"):
-        _validate_field(surroundings[name], f"site_and_surroundings.{name}")
-    for name in ("features_affected", "designated_sites_mentioned"):
-        if not isinstance(surroundings[name], list):
-            raise ValueError(f"site_and_surroundings.{name} must be an array.")
-    for feature in surroundings["features_affected"]:
-        feature = _require_mapping(
-            feature, {"feature", "effect", "confidence", "evidence"},
-            "Each features_affected item",
-        )
-        if not isinstance(feature["feature"], str):
-            raise ValueError("features_affected feature must be a string.")
-        if feature["effect"] not in {"loss", "fragmentation", "change_of_use", "retained", "not_stated"}:
-            raise ValueError("features_affected has an invalid effect.")
-        if feature["confidence"] not in _CONFIDENCE_LEVELS:
-            raise ValueError("features_affected has an invalid confidence.")
-        _validate_evidence(feature["evidence"], "features_affected evidence")
-    for site in surroundings["designated_sites_mentioned"]:
-        site = _require_mapping(
-            site, {"name", "type", "distance", "confidence", "evidence"},
-            "Each designated_sites_mentioned item",
-        )
-        for key in ("name", "type"):
-            if not isinstance(site[key], str):
-                raise ValueError(f"designated_sites_mentioned {key} must be a string.")
-        if site["distance"] is not None and not isinstance(site["distance"], str):
-            raise ValueError("designated_sites_mentioned distance must be a string or null.")
-        if site["confidence"] not in _CONFIDENCE_LEVELS:
-            raise ValueError("designated_sites_mentioned has an invalid confidence.")
-        _validate_evidence(site["evidence"], "designated_sites_mentioned evidence")
-
-    development = _require_mapping(
-        findings["scale_and_type_of_development"],
-        _SCALE_AND_TYPE_KEYS,
-        "scale_and_type_of_development",
-    )
-    for name, field in development.items():
-        _validate_field(field, f"scale_and_type_of_development.{name}")
-
-    agricultural_land = _require_mapping(
-        findings["agricultural_land"],
-        {"agriculture", "agricultural_land_area_lost", "alc_grades", "soil_survey"},
-        "agricultural_land",
-    )
-    for name, field in agricultural_land.items():
-        _validate_field(field, f"agricultural_land.{name}")
-
-    if not isinstance(findings["assessments"], list):
-        raise ValueError("assessments must be an array.")
-    for assessment in findings["assessments"]:
-        _validate_field(assessment, "Each assessments item")
-    if not isinstance(findings["limitations"], list):
-        raise ValueError("limitations must be an array.")
-    for limitation in findings["limitations"]:
-        limitation = _require_mapping(
-            limitation, {"document_id", "page", "issue"}, "Each limitations item"
-        )
-        if limitation["document_id"] is not None and not isinstance(limitation["document_id"], str):
-            raise ValueError("limitations document_id must be a string or null.")
-        if limitation["page"] is not None and type(limitation["page"]) is not int:
-            raise ValueError("limitations page must be an integer or null.")
-        if not isinstance(limitation["issue"], str):
-            raise ValueError("limitations issue must be a string.")
-    if not isinstance(findings["notes"], list) or any(
-        not isinstance(note, str) for note in findings["notes"]
-    ):
-        raise ValueError("notes must be an array of strings.")
+    development = findings.get("scale_and_type_of_development")
+    incomplete_development = []
+    if not isinstance(development, dict):
+        incomplete_development.append("scale_and_type_of_development")
+    else:
+        for name in sorted(_SCALE_AND_TYPE_KEYS):
+            field = development.get(name)
+            if (
+                not isinstance(field, dict)
+                or "value" not in field
+                or field.get("status") not in ("stated", "not_stated")
+                or (field.get("status") == "stated" and (
+                    not isinstance(field.get("value"), str) or not field["value"].strip()
+                ))
+                or (field.get("status") == "not_stated" and field.get("value") is not None)
+            ):
+                incomplete_development.append(f"scale_and_type_of_development.{name}")
+    if incomplete_fields or incomplete_development:
+        findings["screening_completeness"] = {
+            "complete": False,
+            "missing_fields": sorted(set(incomplete_fields + incomplete_development)),
+            "incomplete_development_fields": incomplete_development,
+        }
 
     return findings
 

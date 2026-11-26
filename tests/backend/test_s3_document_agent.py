@@ -144,6 +144,26 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertNotIn("https://example.test/11.pdf", self.llm.generate.call_args.args[0])
         self.assertFalse(self.output_directory.exists())
 
+    def test_incomplete_development_is_preserved_in_s3_output(self):
+        del self.findings["scale_and_type_of_development"]
+        del self.findings["limitations"]
+        self.metadata["documents"][1]["download_error"] = "Download unavailable"
+
+        result = self.run_agent(s3_client=self.s3)
+
+        final_output = result["final_output"]
+        self.assertNotIn("scale_and_type_of_development", final_output)
+        self.assertNotIn("limitations", final_output)
+        self.assertEqual(final_output["processing_limitations"], [
+            "Document 12 was not downloaded: Download unavailable"
+        ])
+        self.assertEqual(
+            final_output["screening_completeness"]["incomplete_development_fields"],
+            ["scale_and_type_of_development"],
+        )
+        stored = json.loads(self.objects["case/run/KEY-prioritized-final-output.json"])
+        self.assertEqual(stored["screening_completeness"], final_output["screening_completeness"])
+
     def test_office_documents_are_in_source_json_not_model_attachments(self):
         self.metadata["documents"][0]["url"] = "https://example.test/11.docx"
         self.metadata["documents"][1]["url"] = "https://example.test/12.xlsx"

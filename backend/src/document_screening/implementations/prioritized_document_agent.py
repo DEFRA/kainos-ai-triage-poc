@@ -219,8 +219,10 @@ def run_prioritized_document_screening(
 
     try:
         document_findings = parse_document_findings(response)
-        document_findings["limitations"] = list(document_findings["limitations"])
-        document_findings["limitations"].extend(downloaded_warnings)
+        if isinstance(document_findings.get("limitations"), list):
+            document_findings["limitations"].extend(downloaded_warnings)
+        elif downloaded_warnings:
+            document_findings["processing_limitations"] = downloaded_warnings
         final_output = merge_document_findings(metadata, document_findings)
     except ValueError as error:
         response_path = output_directory / f"{application_key}-prioritized-response.txt"
