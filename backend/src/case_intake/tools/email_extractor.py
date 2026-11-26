@@ -7,7 +7,9 @@ from os import PathLike
 from typing import Any
 from botocore.exceptions import ClientError
 from bs4 import BeautifulSoup
-from backend.src.case_intake.tools.lpa_website_post_processing import deterministic_post_processing_lpa_website
+from openpyxl import load_workbook
+from backend.src.case_intake.tools.lpa_website_post_processing import llm_post_processing_lpa_website
+# from backend.src.case_intake.tools.lpa_website_post_processing import deterministic_post_processing_lpa_website
 from backend.src.utilities.document_parser import (
     convert_document_to_pdf_libreoffice,
     parse_doc,
@@ -20,26 +22,39 @@ from backend.src.utilities.llm_json_parser import parse_llm_json
 
 
 def load_idox_mapping(path: str | PathLike[str]) -> list[dict[str, str | int]]:
-    with Path(path).open(encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
-        required = {"lpa_name", "assigned_current_lpa_name", "lpa_website"}
-        missing = required - set(reader.fieldnames or [])
-        if missing:
-            raise ValueError(f"Missing CSV columns: {', '.join(sorted(missing))}")
+    path = Path(path)
+    if path.suffix.lower() == ".xlsx":
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            sheet_rows = workbook.active.iter_rows(values_only=True)
+            columns = next(sheet_rows, ())
+            rows = [dict(zip(columns, values)) for values in sheet_rows]
+        finally:
+            workbook.close()
+    else:
+        with path.open(encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file)
+            columns = reader.fieldnames or []
+            rows = list(reader)
 
-        mapping = []
-        for row_number, row in enumerate(reader, start=2):
-            name = (row["lpa_name"] or "").strip()
-            current_name = (row["assigned_current_lpa_name"] or "").strip()
-            url = (row["lpa_website"] or "").strip()
-            if url and (name or current_name):
-                mapping.append({
-                    "row_number": row_number,
-                    "lpa_name": name,
-                    "assigned_current_lpa_name": current_name,
-                    "lpa_website": url,
-                })
-        return mapping
+    required = {"lpa_name", "assigned_current_lpa_name", "lpa_website"}
+    missing = required - set(columns)
+    if missing:
+        raise ValueError(f"Missing lookup columns: {', '.join(sorted(missing))}")
+
+    mapping = []
+    for row_number, row in enumerate(rows, start=2):
+        name = (row["lpa_name"] or "").strip()
+        current_name = (row["assigned_current_lpa_name"] or "").strip()
+        url = (row["lpa_website"] or "").strip()
+        if url and (name or current_name):
+            mapping.append({
+                "row_number": row_number,
+                "lpa_name": name,
+                "assigned_current_lpa_name": current_name,
+                "lpa_website": url,
+            })
+    return mapping
 
 
 def normalise_lpa_reference_id_underscores_to_forward_slashes(data):
@@ -89,7 +104,7 @@ def extract_from_consultation(
     skip_annexes: bool = True,
     idox_mapping_path: str | Path | None = ( # Setting to 'None' disables this
         Path(__file__).resolve().parents[4]
-        / "data/lpa_websites_detailed_idox_filtered_with_current_lpa_names.csv"
+        / "data/lpa_websites_post_processing_lookup.xlsx"
     ),
 ) -> dict:
     """Extract each email and upload results.
@@ -441,9 +456,14 @@ def extract_from_consultation(
                 raise ValueError("IDOX mapping contains no usable rows.")
             # Apply changes to a copy so a failure retains the original result
             processed_result = copy.deepcopy(result)
-            changed, idox_warnings = deterministic_post_processing_lpa_website(
-                processed_result, mapping, mapping_path.name
-            )
+            with LLMClient(model_config_path) as client:
+                changed, idox_warnings = llm_post_processing_lpa_website(
+                    processed_result, mapping, mapping_path.name, client
+                )
+            # To use deterministic matching, comment out the LLM block above and uncomment this call.
+            # changed, idox_warnings = deterministic_post_processing_lpa_website(
+            #     processed_result, mapping, mapping_path.name
+            # )
             result = processed_result
             warnings_for_entire_extraction_job_run.extend(idox_warnings)
         except Exception as error:

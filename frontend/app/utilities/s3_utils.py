@@ -59,6 +59,16 @@ def render_s3_download_link(s3_client: Any, bucket: str, key: str) -> None:
     User doesn't need S3 credentials: 
         The presigned URL temporarily grants access using the app’s permissions. 
         However, their browser still needs network access to the S3 endpoint, and the bucket policy must allow that request.
+
+    Platform Engineer response:
+    Short answer: yes, presigned URLs will work.
+    The user doesn't need AWS credentials to access it
+    Their browser downloads straight from S3 over HTTPS. Nothing in our bucket setup blocks that: there's no bucket policy, and the bucket stays private.
+    I've already given the app's ECS task role S3 read access, so you don't need to change anything there.
+
+    Two things to keep in mind:
+    Create the URL when the user clicks, not when the page loads, and keep the expiry short (e.g. 5 minutes). Each click gets a fresh link, so an old or shared link soon stops working. A download that has already started still finishes. Creating a URL is free and doesn't call AWS. For example:
+    Use a normal link or redirect, not a JavaScript fetch. The bucket has no CORS rule, so fetch would fail.
     """
     filename = PurePosixPath(key).name
     url = s3_client.generate_presigned_url(

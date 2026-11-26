@@ -95,7 +95,7 @@ class EmailExtractionTests(unittest.TestCase):
         s3.get_object.return_value = {"Body": io.BytesIO(json.dumps(metadata).encode())}
         s3.put_object.side_effect = upload_error
         model = model or MagicMock()
-        model.generate.return_value = model_response
+        model.generate.side_effect = [model_response, '{"row": 1}']
         prompt = Path(__file__).resolve().parents[2] / "backend/src/case_intake/prompts/case_intake_extraction.md"
 
         with patch("backend.src.case_intake.tools.email_extractor.LLMClient") as llm_client:
@@ -106,7 +106,7 @@ class EmailExtractionTests(unittest.TestCase):
                 **extract_options,
             )
 
-        model_input = json.loads(model.generate.call_args.args[0].split("\n\n", 1)[1])
+        model_input = json.loads(model.generate.call_args_list[0].args[0].split("\n\n", 1)[1])
         saved = json.loads(s3.put_object.call_args.kwargs["Body"])
         return result, model_input, saved
 
@@ -150,6 +150,28 @@ class EmailExtractionTests(unittest.TestCase):
         self.assertEqual(website["value"], "https://planning.example.gov.uk/online-applications/")
         self.assertEqual(website["original_extraction"]["value"], "https://example.gov.uk")
         self.assertEqual(result["json"], saved)
+
+    def test_missing_website_is_filled_before_upload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mapping = Path(directory) / "mapping.csv"
+            mapping.write_text(
+                "lpa_name,assigned_current_lpa_name,lpa_website\n"
+                "Old Name,Current Council,https://planning.example.gov.uk/online-applications/\n",
+                encoding="utf-8",
+            )
+            response = json.dumps({
+                "lpa_name": {"value": "Current Council", "status": "stated"},
+                "lpa_website": {"value": None, "status": "not_stated"},
+            })
+            result, _, saved = self.extract(
+                {"text": "Email"}, [], idox_mapping_path=mapping, model_response=response,
+            )
+
+        website = saved["records"][0]["extractions"]["lpa_website"]
+        self.assertEqual(website["value"], "https://planning.example.gov.uk/online-applications/")
+        self.assertEqual(website["status"], "stated")
+        self.assertEqual(website["original_extraction"]["status"], "not_stated")
+        self.assertEqual(result["warnings"], [])
 
     def test_attachment_filename_skip_options(self):
         # Exercise each filename-based skip option against original and stored names
@@ -215,19 +237,19 @@ class EmailExtractionTests(unittest.TestCase):
             )
 
         self.assertEqual(saved["records"][0]["extractions"]["lpa_website"], "https://unmatched.example.org")
-        self.assertIn("no unique website match", result["warnings"][0])
+        self.assertIn("no unambiguous LPA name", result["warnings"][0])
         self.assertEqual(saved["warnings"], result["warnings"])
 
     def test_post_processing_error_discards_partial_changes(self):
         # Simulate post-processing failing after mutating the extraction
         # Check that the original website is saved and the error is reported
-        def fail_after_mutation(result, mapping, mapping_source):
+        def fail_after_mutation(result, mapping, mapping_source, client):
             result["records"][0]["extractions"]["lpa_website"] = "https://changed.example.org"
             raise ValueError("unexpected mapping error")
 
         response = json.dumps({"lpa_website": "https://example.gov.uk"})
         with patch("backend.src.case_intake.tools.email_extractor.load_idox_mapping", return_value=[{}]), \
-             patch("backend.src.case_intake.tools.email_extractor.deterministic_post_processing_lpa_website", side_effect=fail_after_mutation):
+               patch("backend.src.case_intake.tools.email_extractor.llm_post_processing_lpa_website", side_effect=fail_after_mutation):
             result, _, saved = self.extract(
                 {"text": "Email"}, [], idox_mapping_path=Path("mapping.csv"), model_response=response,
             )

@@ -9,14 +9,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
-
 import boto3
 import httpx
 import yaml
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 from openai import AuthenticationError, OpenAI
-
 from backend.src.utilities.llm_client import LLMClient, ModelConfig, collect_llm_usage
 
 
@@ -202,6 +200,9 @@ class LLMClientTests(unittest.TestCase):
     def test_performance_notebook_records_usage_for_success_and_failure(self):
         self.write_config()
         client, _ = self.ollama_client(usage={"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15})
+        failing_client, _ = self.ollama_client(status=401)
+        bedrock_client, stubber = self.bedrock_client()
+        stubber.add_response("converse", self.bedrock_response(), self.bedrock_request())
         directory = Path(self.directory.name)
         for consultation_id in ("success", "failure"):
             folder = directory / "sample" / consultation_id
@@ -211,7 +212,10 @@ class LLMClientTests(unittest.TestCase):
         notebook_path = Path(__file__).resolve().parents[2] / "notebooks/performance_testing.ipynb"
         cell = json.loads(notebook_path.read_text(encoding="utf-8"))["cells"][0]["source"]
         tree = ast.parse(cell if isinstance(cell, str) else "\n".join(cell))
-        replacements = {"labels": ["sample"], "emails_root": str(directory), "results_path": str(output_path)}
+        replacements = {
+            "labels": ["sample"], "selection_mode": "all",
+            "emails_root": str(directory), "results_path": str(output_path),
+        }
 
         class ConfigureNotebook(ast.NodeTransformer):
             def visit_Assign(self, node):
@@ -219,7 +223,7 @@ class LLMClientTests(unittest.TestCase):
                     name = node.targets[0].id
                     if name in replacements:
                         value = repr(replacements[name])
-                        if name != "labels":
+                        if name in {"emails_root", "results_path"}:
                             value = f"Path({value})"
                         return ast.copy_location(ast.parse(f"{name} = {value}").body[0], node)
                 return self.generic_visit(node)
@@ -227,8 +231,12 @@ class LLMClientTests(unittest.TestCase):
         def fake_run(**kwargs):
             client.generate("Question")
             if kwargs["consultation_id"] == "failure":
-                raise RuntimeError("failed after model call")
+                try:
+                    failing_client.generate("Question")
+                except AuthenticationError as error:
+                    raise RuntimeError("failed after model call") from error
             client.generate("Second")
+            bedrock_client.generate("Question")
             return {"errors": [], "run_id": "run", "stage_outputs": {"decision": {"classification": "unnecessary"}}}
 
         tree = ast.fix_missing_locations(ConfigureNotebook().visit(tree))
@@ -239,8 +247,15 @@ class LLMClientTests(unittest.TestCase):
 
         with output_path.open(encoding="utf-8", newline="") as file:
             rows = {row["consultation_id"]: row for row in csv.DictReader(file)}
-        self.assertEqual(len(json.loads(rows["success"]["llm_token_usage"])["test_intelligence.py"]), 2)
-        self.assertEqual(len(json.loads(rows["failure"]["llm_token_usage"])["test_intelligence.py"]), 1)
+        self.assertEqual(len(json.loads(rows["success"]["llm_token_usage"])["test_intelligence.py"]), 3)
+        self.assertEqual(len(json.loads(rows["failure"]["llm_token_usage"])["test_intelligence.py"]), 2)
+        success_totals = json.loads(rows["success"]["llm_token_totals"])
+        self.assertEqual(success_totals["ollama"]["test-model"]["total_tokens"], 30)
+        self.assertEqual(success_totals["bedrock"]["anthropic.test-model"]["total_tokens"], 15)
+        failure_totals = json.loads(rows["failure"]["llm_token_totals"])["ollama"]["test-model"]
+        self.assertEqual(failure_totals["known_total_tokens"], 15)
+        self.assertIsNone(failure_totals["total_tokens"])
+        self.assertEqual(failure_totals["calls_with_missing_usage"], 1)
         self.assertIn("failed after model call", rows["failure"]["error_message"])
 
     def test_ollama_thinking_levels_and_no_implicit_history(self):
