@@ -62,14 +62,22 @@ variable "ecs_subnet_id" {
   }
 }
 
-variable "ui_container_image" {
-  description = "Digest-pinned ECR image for the replacement Streamlit UI task."
+variable "ui_image_repository" {
+  description = "ECR repository holding the UI image."
   type        = string
+  default     = "ai-triage-container-repository"
+}
 
-  validation {
-    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.ui_container_image))
-    error_message = "The UI image must be pinned to a SHA-256 digest."
-  }
+variable "ui_image_tag" {
+  description = "ECR tag resolved to a digest at plan time; the task definition is still pinned by digest."
+  type        = string
+  default     = "latest"
+}
+
+variable "alert_emails" {
+  description = "Email addresses for service alarms and new-image notifications; set in terraform.tfvars, not committed."
+  type        = set(string)
+  default     = []
 }
 
 variable "ui_log_retention_days" {

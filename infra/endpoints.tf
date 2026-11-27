@@ -22,26 +22,5 @@ resource "aws_vpc_endpoint" "ui_interface" {
   }
 }
 
-resource "aws_route_table" "ecs" {
-  vpc_id = data.aws_vpc.provided.id
-
-  tags = {
-    Name = "ne-triage-poc-ecs"
-  }
-}
-
-resource "aws_route_table_association" "ecs" {
-  subnet_id      = var.ecs_subnet_id
-  route_table_id = aws_route_table.ecs.id
-}
-
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = data.aws_vpc.provided.id
-  service_name      = "com.amazonaws.eu-west-2.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.ecs.id]
-
-  tags = {
-    Name = "ne-triage-poc-s3-endpoint"
-  }
-}
+# Subnet routing (0.0.0.0/0 -> TGW) and the S3 gateway endpoint (POCLDNDIPS3VPCE001)
+# are owned by the platform VPC Terraform on POCLDNDIPINTRTB001/2.
