@@ -52,6 +52,10 @@ def _load_lpa_settings(config_path: Optional[Union[str, Path]] = None) -> dict:
 	return config.get("lpa", {})
 
 
+class _NotSingleApplicationError(RuntimeError):
+	"""A search response was not the summary page of exactly the requested application."""
+
+
 class PublicAccessClient:
 	def __init__(
 		self,
@@ -302,6 +306,52 @@ class PublicAccessClient:
 		response = self._request("POST", search_url, data=payload, headers={
 			"Referer": page_url, "Origin": self._origin,
 		})
+		return self._application_from_search_response(response, reference, "simple search")
+
+	def _submit_advanced_search(self, reference):
+		"""Search by reference using the site's own Advanced Search form fields.
+
+		Field names vary between councils, so every field the form renders is
+		sent with the value a browser would submit, with only the reference set.
+		"""
+		page_url = self._check_same_host(urljoin(self.base_url, "search.do?action=advanced"))
+		page = self._request("GET", page_url)
+		soup = BeautifulSoup(page.content, "html.parser")
+		form = soup.select_one("form#advancedSearchForm")
+		if form is None or form.get("method", "get").lower() != "post":
+			title = soup.title.get_text(" ", strip=True) if soup.title else "(none)"
+			raise RuntimeError(f"Expected a POST Advanced Search form; page title: {title!r}.")
+		search_url = self._check_same_host(urljoin(page.url, form.get("action") or page.url))
+		payload = []
+		for field in form.select("input[name], select[name], textarea[name]"):
+			name = field["name"]
+			if field.name == "select":
+				selected = field.select("option[selected]")
+				# Browsers send every selected option of a multi-select (none if
+				# none is selected), but a single select always sends one option.
+				if not field.has_attr("multiple") and not selected:
+					selected = field.select("option")[:1]
+				for option in selected:
+					payload.append((name, option.get("value", option.get_text(strip=True))))
+				continue
+			if field.name == "textarea":
+				value = field.get_text()
+			else:
+				input_type = field.get("type", "text").lower()
+				if input_type in {"submit", "button", "reset", "image", "file"}:
+					continue
+				if input_type in {"checkbox", "radio"} and not field.has_attr("checked"):
+					continue
+				value = field.get("value", "")
+			payload.append((name, reference if name == "searchCriteria.reference" else value))
+		if not any(name == "searchCriteria.reference" for name, _ in payload):
+			raise RuntimeError("The Advanced Search form has no searchCriteria.reference field.")
+		response = self._request("POST", search_url, data=payload, headers={
+			"Referer": page.url, "Origin": self._origin,
+		})
+		return self._application_from_search_response(response, reference, "advanced search")
+
+	def _application_from_search_response(self, response, reference, search_name):
 		soup = BeautifulSoup(response.content, "html.parser")
 		labels = self._parse_label_values(soup)
 		returned_reference = next(
@@ -316,11 +366,29 @@ class PublicAccessClient:
 		if (returned_reference != reference.strip() or len(keys) != 1
 				or not any(tab["active_tab"] == "summary" for tab in tabs)):
 			title = soup.title.get_text(" ", strip=True) if soup.title else "(none)"
-			raise RuntimeError(
-				f"Expected the application summary for {reference!r}; "
+			raise _NotSingleApplicationError(
+				f"Expected the application summary for {reference!r} from {search_name}; "
 				f"page title: {title!r}. Search-results lists are not supported."
 			)
 		return keys.pop(), soup, tabs
+
+	def _find_application(self, reference):
+		"""Use the simple search, falling back to the advanced search when it
+		does not land on exactly the requested application's summary."""
+		try:
+			return self._submit_search(reference)
+		except _NotSingleApplicationError as simple_error:
+			print(
+				"[document screening] Simple search did not return a single application; "
+				"trying advanced search."
+			)
+			try:
+				return self._submit_advanced_search(reference)
+			except RuntimeError as advanced_error:
+				raise RuntimeError(
+					f"Neither search found a single application for {reference!r}. "
+					f"Simple search: {simple_error} Advanced search: {advanced_error}"
+				) from advanced_error
 
 	def _parse_tabs(self, soup, page_url):
 		tabs = []
@@ -736,7 +804,7 @@ class PublicAccessClient:
 
 	def search(self, reference: str) -> str:
 		"""Search with fresh form tokens and return the exact application's key."""
-		return self._submit_search(reference)[0]
+		return self._find_application(reference)[0]
 
 	def get_tabs(self, keyval: str) -> list[dict]:
 		soup, page_url = self._get_tab(keyval, "summary")
@@ -799,7 +867,7 @@ class PublicAccessClient:
 				else:
 					raise
 				if reference is not None:
-					refreshed_keyval, _, _ = self._submit_search(reference)
+					refreshed_keyval, _, _ = self._find_application(reference)
 					if refreshed_keyval != keyval:
 						raise RuntimeError(
 							f"Search for {reference!r} returned a different application key."

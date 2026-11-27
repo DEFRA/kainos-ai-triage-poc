@@ -30,7 +30,7 @@ Below are examples of the documents falling into the different priorities.
 - Hydrology report; minerals working and restoration scheme; energy or combustion technical reports
 - Proposed site, block or layout plan and schedule of accommodation: when unit numbers or floorspace may not be on the application form
 
-**3. `maybe` — could hold a useful fact, but rarely the only source**
+**2. `maybe` — could hold a useful fact, but rarely the only source**
 - Design and access statement
 - Any Habitats Regulations Assessment, Appropriate Assessment, "shadow HRA", "information to inform HRA", nutrient budget or recreational impact assessment
 - Environmental statement 
@@ -46,7 +46,7 @@ Below are examples of the documents falling into the different priorities.
 - Construction management plan
 - Viability report
 
-**4. `skip` — only these**
+**3. `skip` — only these**
 - Public comments, neighbour letters and petitions
 - Photographs
 - Press notices
@@ -70,7 +70,7 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
 {
   "documents": [
     {
-      "id": "exact supplied ID",
+      "id": "exact supplied id value",
       "priority": "must"|"maybe"|"skip",
       "uncertain": false,
       "reason": "Short justification from the metadata."
@@ -79,4 +79,4 @@ Return exactly one valid JSON object, with no Markdown fences or commentary.
 }
 ```
 
-Include every supplied `document_id` exactly once. Do not invent IDs or add other fields.
+Include every supplied `id` exactly once, in the order supplied, copying each `id` exactly as given (it may be a short document number). Do not invent IDs or add other fields.

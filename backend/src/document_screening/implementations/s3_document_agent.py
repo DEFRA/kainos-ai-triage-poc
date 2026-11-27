@@ -1,8 +1,16 @@
-"""Prioritize and screen consultation documents, retaining artifacts in S3."""
+"""Prioritize and screen consultation documents, retaining artifacts in S3.
 
+Screening uses three model calls: prioritization of the document list,
+batched pre-screening of the downloaded documents, and a final screening call
+that consolidates the batch outputs into the validated findings schema.
+"""
+
+import contextvars
 import json
 import tempfile
 import warnings
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import date
 from pathlib import Path
@@ -17,12 +25,15 @@ from backend.src.utilities.document_parser import (
     parse_rtf,
     parse_xlsx,
 )
-from backend.src.utilities.llm_client import LLMClient
+from backend.src.utilities.llm_client import LLMClient, ModelConfig
 from backend.src.utilities.s3_utils import create_s3_client, put_object_with_metadata
 from ..tools.lpa_client import PublicAccessClient
 from ..tools.utilities import (
     add_polygon_metadata,
+    clean_document_pages,
+    clean_document_text,
     load_prioritization_config,
+    match_document_priority_rule,
     merge_document_findings,
     parse_document_findings,
     parse_prioritization,
@@ -34,7 +45,51 @@ _DEFAULT_IMPLEMENTATION_CONFIG = (
 )
 _PRIORITIZATION_PROMPT = Path(__file__).parent.parent / "prompts" / "prioritize_documents.md"
 _SCREENING_PROMPT = Path(__file__).parent.parent / "prompts" / "screen_documents.md"
+_CONSOLIDATION_PROMPT = Path(__file__).parent.parent / "prompts" / "consolidate_findings.md"
 _DOCUMENT_METADATA_FIELDS = ("id", "published", "type", "drawing_number", "description")
+MODEL_CALLS = ("prioritization", "pre_screening", "screening")
+
+
+def _resolve_model_configs(
+    model_configs: Union[str, Path, Mapping[str, Union[str, Path]]],
+) -> dict[str, Path]:
+    if isinstance(model_configs, (str, Path)):
+        if not str(model_configs).strip():
+            raise ValueError("model_configs must not be an empty path.")
+        print(
+            "[document screening] Detected a single model config; using it for "
+            f"{', '.join(MODEL_CALLS)}: {Path(model_configs).name}."
+        )
+        return {call: Path(model_configs) for call in MODEL_CALLS}
+    if not isinstance(model_configs, Mapping) or set(model_configs) != set(MODEL_CALLS):
+        raise ValueError(
+            "model_configs must be one model config path or a mapping with exactly: "
+            f"{', '.join(MODEL_CALLS)}."
+        )
+    for call in MODEL_CALLS:
+        if not isinstance(model_configs[call], (str, Path)) or not str(model_configs[call]).strip():
+            raise ValueError(f"Model config for {call} must be a non-empty path.")
+    resolved = {call: Path(model_configs[call]) for call in MODEL_CALLS}
+    print(
+        "[document screening] Detected separate model configs: "
+        + ", ".join(f"{call}={path.name}" for call, path in resolved.items()) + "."
+    )
+    return resolved
+
+
+def _warn_if_near_context_limit(
+    llm_client: LLMClient, context_limit: Optional[int], system_prompt: str, prompt: str,
+) -> None:
+    if context_limit is None:
+        return
+    estimated_text_tokens = (len(system_prompt) + len(prompt) + 3) // 4
+    if estimated_text_tokens + llm_client.config.max_output_tokens >= context_limit * 0.8:
+        warnings.warn(
+            "Estimated text tokens plus reserved output approach the configured "
+            "context limit. This estimate excludes attachment tokens and may "
+            "underestimate actual usage. No documents will be omitted.",
+            RuntimeWarning, stacklevel=3,
+        )
 
 
 def _upload_artifacts(
@@ -59,7 +114,7 @@ def _upload_artifacts(
 def run_s3_document_screening(
     reference: str,
     base_url: str,
-    model_config_path: Union[str, Path],
+    model_configs: Union[str, Path, Mapping[str, Union[str, Path]]],
     *,
     bucket: str,
     prefix: str,
@@ -67,11 +122,20 @@ def run_s3_document_screening(
     implementation_config_path: Optional[Union[str, Path]] = None,
     prioritization_prompt_path: Optional[Union[str, Path]] = None,
     prompt_path: Optional[Union[str, Path]] = None,
+    consolidation_prompt_path: Optional[Union[str, Path]] = None,
     dpi: int = 150,
     context_limit: Optional[int] = None,
     ignore_after: Optional[date] = None,
 ) -> dict:
-    """Screen prioritized documents and store the generated artifacts under an S3 prefix."""
+    """Screen prioritized documents and store the generated artifacts under an S3 prefix.
+
+    model_configs is either one model config path, used for all three model
+    calls, or a mapping with a path for each of prioritization, pre_screening
+    and screening. prompt_path is the extraction prompt sent with every
+    pre-screening batch; its output is not validated. The consolidation prompt
+    plus the extraction prompt instruct the final screening call, whose output
+    is validated as before.
+    """
     if not isinstance(bucket, str) or not bucket.strip():
         raise ValueError("bucket must be a non-empty string.")
     if not isinstance(prefix, str) or not prefix.strip().strip("/"):
@@ -80,6 +144,7 @@ def run_s3_document_screening(
     prefix = prefix.strip().strip("/")
     if context_limit is not None and (type(context_limit) is not int or context_limit <= 0):
         raise ValueError("context_limit must be a positive integer when set.")
+    model_config_paths = _resolve_model_configs(model_configs)
 
     implementation_config_path = (
         Path(implementation_config_path)
@@ -91,8 +156,20 @@ def run_s3_document_screening(
         if prioritization_prompt_path is not None else _PRIORITIZATION_PROMPT
     )
     prompt_path = Path(prompt_path) if prompt_path is not None else _SCREENING_PROMPT
+    consolidation_prompt_path = (
+        Path(consolidation_prompt_path)
+        if consolidation_prompt_path is not None else _CONSOLIDATION_PROMPT
+    )
     prioritization_system_prompt = prioritization_prompt_path.read_text(encoding="utf-8")
-    system_prompt = prompt_path.read_text(encoding="utf-8")
+    pre_screening_system_prompt = prompt_path.read_text(encoding="utf-8")
+    # The extraction prompt defines the fields and output schema the consolidation must return.
+    screening_system_prompt = (
+        consolidation_prompt_path.read_text(encoding="utf-8")
+        + "\n\n# Extraction instructions used for the pre-screening batches\n\n"
+        + pre_screening_system_prompt
+    )
+    # Attachment support depends on the model that receives the documents.
+    pre_screening_provider = ModelConfig.from_yaml(model_config_paths["pre_screening"]).provider
     if s3_client is None:
         s3_client = create_s3_client()
 
@@ -112,48 +189,119 @@ def run_s3_document_screening(
                 document_ids = [str(document["id"]) for document in documents]
                 if len(document_ids) != len(set(document_ids)):
                     raise ValueError("LPA metadata contains duplicate document IDs.")
-                ranking_input = [
-                    {field: document.get(field) for field in _DOCUMENT_METADATA_FIELDS}
-                    for document in documents
-                ]
-                ranking_prompt = (
-                    "Prioritize every document in this application using only the supplied metadata.\n"
-                    + json.dumps({"documents": ranking_input}, ensure_ascii=False, indent=2)
+
+                rule_decisions = {}
+                for document in documents:
+                    rule = match_document_priority_rule(
+                        document,
+                        settings["must_document_patterns"],
+                        settings["skip_document_type_patterns"],
+                    )
+                    if rule is not None:
+                        rule_decisions[str(document["id"])] = {
+                            "id": str(document["id"]), **rule, "uncertain": False, "source": "rule",
+                        }
+                rule_counts = [record["priority"] for record in rule_decisions.values()]
+                print(
+                    f"[document screening] Document rules matched {len(rule_decisions)} of "
+                    f"{len(documents)} documents: {rule_counts.count('must')} must, "
+                    f"{rule_counts.count('skip')} skip."
                 )
-                print(f"[document screening] Starting document ranking for {len(documents)} documents.")
-                with LLMClient(model_config_path) as ranking_client:
-                    ranking_response = ranking_client.generate(
-                        ranking_prompt, system_prompt=prioritization_system_prompt,
-                    )
-                    provider = ranking_client.config.provider
-                    model = ranking_client.config.model
-                    prioritization_usage = (
-                        ranking_client.last_usage
-                        if isinstance(ranking_client.last_usage, dict) else None
-                    )
-                prioritization = parse_prioritization(ranking_response, document_ids)
-                missing_prioritization_ids = [
-                    item["id"] for item in prioritization
-                    if item.get("missing_from_response")
+
+                # The model sees short numbers instead of long LPA IDs, which it
+                # otherwise tends to repeat, mistype or invent.
+                ranked_documents = [
+                    document for document in documents if str(document["id"]) not in rule_decisions
                 ]
-                if missing_prioritization_ids:
-                    metadata["prioritization_warnings"] = [{
-                        "type": "missing_document_prioritizations",
-                        "document_ids": missing_prioritization_ids,
-                        "message": "Missing model priorities defaulted to maybe; these documents were not selected unless include_maybe is true.",
-                    }]
-                    print(
-                        "[document screening] WARNING: Missing prioritization for "
-                        f"{len(missing_prioritization_ids)} documents; defaulted to maybe."
+                number_to_id = {
+                    str(number): str(document["id"])
+                    for number, document in enumerate(ranked_documents, start=1)
+                }
+                prioritization_warnings = []
+                ranking_response = None
+                prioritization_usage = None
+                model_decisions = {}
+                if ranked_documents:
+                    ranking_input = [
+                        {
+                            **{field: document.get(field) for field in _DOCUMENT_METADATA_FIELDS},
+                            "id": number,
+                        }
+                        for number, document in enumerate(ranked_documents, start=1)
+                    ]
+                    ranking_prompt = (
+                        "Prioritize every document in this application using only the supplied metadata.\n"
+                        + json.dumps({"documents": ranking_input}, ensure_ascii=False, indent=2)
                     )
+                    print(
+                        "[document screening] Starting document ranking for "
+                        f"{len(ranked_documents)} documents."
+                    )
+                    with LLMClient(model_config_paths["prioritization"]) as ranking_client:
+                        ranking_response = ranking_client.generate(
+                            ranking_prompt, system_prompt=prioritization_system_prompt,
+                        )
+                        models = {"prioritization": {
+                            "provider": ranking_client.config.provider,
+                            "model": ranking_client.config.model,
+                        }}
+                        prioritization_usage = (
+                            ranking_client.last_usage
+                            if isinstance(ranking_client.last_usage, dict) else None
+                        )
+                    # Saved before parsing so a rejected ranking can still be inspected in S3.
+                    (output_directory / f"{application_key}-prioritization-response.txt").write_text(
+                        ranking_response, encoding="utf-8",
+                    )
+                    ranked, ranking_warnings = parse_prioritization(
+                        ranking_response, list(number_to_id),
+                    )
+                    for record in ranked:
+                        real_id = number_to_id[record["id"]]
+                        model_decisions[real_id] = {**record, "id": real_id, "source": "model"}
+                    for warning in ranking_warnings:
+                        if "document_ids" in warning:
+                            warning["document_ids"] = [
+                                number_to_id[number] for number in warning["document_ids"]
+                            ]
+                        prioritization_warnings.append(warning)
+                else:
+                    print("[document screening] No documents left for model ranking; skipping the ranking call.")
+                    prioritization_config = ModelConfig.from_yaml(model_config_paths["prioritization"])
+                    models = {"prioritization": {
+                        "provider": prioritization_config.provider,
+                        "model": prioritization_config.model,
+                    }}
+                if documents and rule_counts.count("skip") == len(documents):
+                    prioritization_warnings.append({
+                        "type": "all_documents_skipped_by_rules",
+                        "document_ids": document_ids,
+                        "message": "Every document matched a skip rule, so none were ranked or downloaded.",
+                    })
+                for warning in prioritization_warnings:
+                    affected = warning.get("document_ids", warning.get("returned_ids", []))
+                    print(
+                        f"[document screening] WARNING: {warning['message']} "
+                        f"({len(affected)}: {', '.join(affected)})"
+                    )
+                if prioritization_warnings:
+                    metadata["prioritization_warnings"] = prioritization_warnings
+
+                prioritization = [
+                    rule_decisions.get(document_id) or model_decisions[document_id]
+                    for document_id in document_ids
+                ]
                 prioritization_by_id = {item["id"]: item for item in prioritization}
                 for document in documents:
                     decision = prioritization_by_id[str(document["id"])]
                     document["priority"] = decision["priority"]
                     document["priority_reason"] = decision["reason"]
                     document["priority_uncertain"] = decision["uncertain"]
+                    document["priority_source"] = decision["source"]
                     if decision.get("missing_from_response"):
                         document["priority_missing_from_response"] = True
+                    if decision.get("duplicate_in_response"):
+                        document["priority_duplicate_in_response"] = True
                     document["downloaded"] = False
 
                 metadata_path = output_directory / f"{application_key}-metadata.json"
@@ -191,11 +339,14 @@ def run_s3_document_screening(
                     )
                     if not pages:
                         raise ValueError(f"Document {document['id']} contains no PDF pages.")
+                    page_texts = [page.text for page in pages]
+                    if settings["clean_document_text"]:
+                        page_texts = clean_document_pages(page_texts)
                     omitted_visual_pages = []
-                    for page in pages:
+                    for page, page_text in zip(pages, page_texts):
                         page_source = {
                             "page_number": page.page_number,
-                            "text": page.text,
+                            "text": page_text,
                         }
                         if settings["include_attachments"] and (
                             page.has_visual_content or not page.text.strip()
@@ -231,7 +382,7 @@ def run_s3_document_screening(
                         source["extraction_error"] = warning
                         preparation_warnings.append(warning)
                 elif suffix in {".jpg", ".jpeg", ".png", ".webp"} or (
-                    provider == "bedrock" and suffix == ".gif"
+                    pre_screening_provider == "bedrock" and suffix == ".gif"
                 ):
                     if settings["include_attachments"]:
                         attachments.append(document_path)
@@ -244,13 +395,13 @@ def run_s3_document_screening(
                         source["extraction_error"] = warning
                         preparation_warnings.append(warning)
                 elif suffix in {".csv", ".doc", ".xls", ".html", ".txt", ".md", ".rtf"}:
-                    if settings["include_attachments"] and provider == "bedrock":
+                    if settings["include_attachments"] and pre_screening_provider == "bedrock":
                         attachments.append(document_path)
                         source["attachment_number"] = len(attachments)
                     elif settings["include_attachments"]:
                         warning = (
                             f"Document {document['id']} ({document['saved_as']}) has unsupported file "
-                            f"format {suffix} for {provider} and was not sent to the model."
+                            f"format {suffix} for {pre_screening_provider} and was not sent to the model."
                         )
                         source["extraction_error"] = warning
                         preparation_warnings.append(warning)
@@ -278,6 +429,8 @@ def run_s3_document_screening(
                     )
                     source["extraction_error"] = warning
                     preparation_warnings.append(warning)
+                if settings["clean_document_text"] and isinstance(source.get("text"), str):
+                    source["text"] = clean_document_text(source["text"])
                 sources.append(source)
 
             downloaded_warnings = [
@@ -292,40 +445,154 @@ def run_s3_document_screening(
                     for document in documents
                 ],
             }
-            attachment_instructions = (
-                "Attachments follow in the numbered order recorded above. "
-                "PDF page images are attached only when a page contains non-text PDF objects "
-                "or has no extractable text. "
-            ) if attachments else "No file attachments are included. "
-            prompt = (
-                "Application metadata and downloaded document evidence:\n"
+            # Batches keep document order and close at pre_screening_batch_size
+            # documents or before exceeding max_pre_screening_batch_characters;
+            # a single larger document is screened alone. Attachment numbers are
+            # renumbered within each batch so they match that call.
+            batch_size = settings["pre_screening_batch_size"]
+            max_batch_characters = settings["max_pre_screening_batch_characters"]
+            source_groups = []
+            group_characters = []
+            for source in sources:
+                source_characters = len(json.dumps(source, ensure_ascii=False, indent=2))
+                if source_characters > max_batch_characters:
+                    print(
+                        f"[document screening] WARNING: Document {source['id']} has "
+                        f"{source_characters:,} characters, more than "
+                        f"max_pre_screening_batch_characters; screening it alone."
+                    )
+                if source_groups and (
+                    len(source_groups[-1]) < batch_size
+                    and group_characters[-1] + source_characters <= max_batch_characters
+                ):
+                    source_groups[-1].append(source)
+                    group_characters[-1] += source_characters
+                else:
+                    source_groups.append([source])
+                    group_characters.append(source_characters)
+            if not source_groups:
+                source_groups, group_characters = [[]], [0]
+            batches = []
+            for batch_number, (batch_sources, batch_characters) in enumerate(
+                zip(source_groups, group_characters), start=1,
+            ):
+                batch_attachments = []
+                for source in batch_sources:
+                    source["pre_screening_batch"] = batch_number
+                    for item in (source, *source["pages"]):
+                        if "attachment_number" in item:
+                            batch_attachments.append(attachments[item["attachment_number"] - 1])
+                            item["attachment_number"] = len(batch_attachments)
+                attachment_instructions = (
+                    "Attachments follow in the numbered order recorded above. "
+                    "PDF page images are attached only when a page contains non-text PDF objects "
+                    "or has no extractable text. "
+                ) if batch_attachments else "No file attachments are included. "
+                batch_prompt = (
+                    f"Pre-screening batch {batch_number} of {len(source_groups)}. The other "
+                    "downloaded documents are screened in separate batches, so record only what "
+                    "the application metadata and the documents in this batch show.\n\n"
+                    "Application metadata and downloaded document evidence:\n"
+                    + json.dumps({
+                        "metadata": model_metadata,
+                        "sources": batch_sources,
+                    }, ensure_ascii=False, indent=2)
+                    + "\n\n" + attachment_instructions
+                    + "Extracted text for all PDF pages is included above. "
+                    "DOCX text and XLSX sheet/cell values are included in the source JSON above."
+                )
+                batches.append({
+                    "batch_number": batch_number,
+                    "document_ids": [str(source["id"]) for source in batch_sources],
+                    "prompt": batch_prompt,
+                    "attachments": batch_attachments,
+                    "document_characters": batch_characters,
+                    "response_artifact": f"pre-screening/batch-{batch_number:02d}-response.txt",
+                })
+
+            def pre_screen_batch(batch: dict) -> tuple[str, Optional[dict], dict]:
+                with LLMClient(model_config_paths["pre_screening"]) as batch_client:
+                    _warn_if_near_context_limit(
+                        batch_client, context_limit, pre_screening_system_prompt, batch["prompt"],
+                    )
+                    batch_response = batch_client.generate(
+                        batch["prompt"],
+                        system_prompt=pre_screening_system_prompt,
+                        attachments=batch["attachments"],
+                    )
+                    batch_usage = (
+                        batch_client.last_usage
+                        if isinstance(batch_client.last_usage, dict) else None
+                    )
+                    batch_model = {
+                        "provider": batch_client.config.provider,
+                        "model": batch_client.config.model,
+                    }
+                response_path = output_directory / batch["response_artifact"]
+                response_path.parent.mkdir(exist_ok=True)
+                response_path.write_text(batch_response, encoding="utf-8")
+                print(
+                    f"[document screening] Completed pre-screening batch "
+                    f"{batch['batch_number']} of {len(batches)}."
+                )
+                return batch_response, batch_usage, batch_model
+
+            print(
+                f"[document screening] Starting pre-screening of {len(sources)} documents in "
+                f"{len(batches)} batches (up to {settings['max_concurrent_pre_screening_calls']} "
+                "concurrent calls)."
+            )
+            with ThreadPoolExecutor(
+                max_workers=settings["max_concurrent_pre_screening_calls"],
+            ) as executor:
+                # Each call runs in a copy of this context so LLM usage collection still applies.
+                futures = [
+                    executor.submit(contextvars.copy_context().run, pre_screen_batch, batch)
+                    for batch in batches
+                ]
+                try:
+                    for batch, future in zip(batches, futures):
+                        batch["response"], batch["usage"], models["pre_screening"] = future.result()
+                except BaseException:
+                    for future in futures:
+                        future.cancel()
+                    raise
+            pre_screening = [
+                {key: value for key, value in batch.items() if key not in {"prompt", "attachments"}}
+                for batch in batches
+            ]
+
+            screening_prompt = (
+                "Application metadata and document preparation warnings:\n"
                 + json.dumps({
                     "metadata": model_metadata,
-                    "sources": sources,
                     "preparation_warnings": preparation_warnings,
                 }, ensure_ascii=False, indent=2)
-                + "\n\n" + attachment_instructions
-                + "Extracted text for all PDF pages is included above. "
-                "DOCX text and XLSX sheet/cell values are included in the source JSON above."
-            )
-            with LLMClient(model_config_path) as llm_client:
-                if context_limit is not None:
-                    estimated_text_tokens = (len(system_prompt) + len(prompt) + 3) // 4
-                    if estimated_text_tokens + llm_client.config.max_output_tokens >= context_limit * 0.8:
-                        warnings.warn(
-                            "Estimated text tokens plus reserved output approach the configured "
-                            "context limit. This estimate excludes attachment tokens and may "
-                            "underestimate actual usage. No documents will be omitted.",
-                            RuntimeWarning, stacklevel=2,
-                        )
-                print("[document screening] Starting evidence screening.")
-                response = llm_client.generate(
-                    prompt, system_prompt=system_prompt, attachments=attachments,
+                + "\n\nPre-screening outputs:\n"
+                + "".join(
+                    f"\n=== Pre-screening batch {batch['batch_number']} of {len(batches)} "
+                    f"(document IDs: {', '.join(batch['document_ids']) or 'none'}) ===\n"
+                    f"{batch['response']}\n"
+                    for batch in batches
                 )
+            )
+            with LLMClient(model_config_paths["screening"]) as llm_client:
+                _warn_if_near_context_limit(
+                    llm_client, context_limit, screening_system_prompt, screening_prompt,
+                )
+                print("[document screening] Starting evidence screening (consolidation).")
+                response = llm_client.generate(
+                    screening_prompt, system_prompt=screening_system_prompt,
+                )
+                models["screening"] = {
+                    "provider": llm_client.config.provider,
+                    "model": llm_client.config.model,
+                }
                 screening_usage = (
                     llm_client.last_usage
                     if isinstance(llm_client.last_usage, dict) else None
                 )
+            print("[document screening] Completed evidence screening (consolidation).")
 
             try:
                 document_findings = parse_document_findings(response)
@@ -360,18 +627,22 @@ def run_s3_document_screening(
                 "document_findings": document_findings,
                 "final_output": final_output,
                 "sources": sources,
-                "provider": provider,
-                "model": model,
+                "pre_screening": pre_screening,
+                "models": {
+                    call: {**models[call], "config_path": str(model_config_paths[call])}
+                    for call in MODEL_CALLS
+                },
                 "implementation_config_path": str(implementation_config_path.resolve()),
                 "prioritization_prompt_path": str(prioritization_prompt_path.resolve()),
                 "prompt_path": str(prompt_path.resolve()),
+                "consolidation_prompt_path": str(consolidation_prompt_path.resolve()),
                 "response": response,
-            }
-            if provider == "bedrock":
-                result["usage"] = {
+                "usage": {
                     "prioritization": prioritization_usage,
+                    "pre_screening": [batch["usage"] for batch in pre_screening],
                     "screening": screening_usage,
-                }
+                },
+            }
             result_name = f"{application_key}-prioritized-document-screening.json"
             final_output_name = f"{application_key}-prioritized-final-output.json"
             for name, payload in ((final_output_name, final_output), (result_name, result)):

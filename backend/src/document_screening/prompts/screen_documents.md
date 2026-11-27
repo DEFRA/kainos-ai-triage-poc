@@ -95,6 +95,8 @@ These fields map one-to-one to the 13 development types in the IRZ tool. They mu
 - `medium`: stated but indirectly or partially legible.
 - `low`: explicit but ambiguous.
 
+For a signal classified `no_signal`, confidence is how sure you are that the documents contain no statement meeting the signal's definition: `high` when the relevant documents were readable and contain none, `medium` or `low` when pages were unreadable or wording was borderline. A signal's confidence is never `null`.
+
 Low confidence never permits guessing. If you cannot read a value, use `null` and explain in `notes`.
 
 ## Output

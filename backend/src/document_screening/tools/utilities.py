@@ -2,6 +2,7 @@
 
 import math
 import re
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -76,7 +77,56 @@ _DEFAULT_DOCUMENT_SCREENING_CONFIG = (
 )
 
 
-def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
+_PRIORITY_RANK = {"skip": 0, "maybe": 1, "must": 2}
+_SEPARATOR_RUN = re.compile(r"([-_=.·•*~/\\|])\1{2,}")
+_HEADER_FOOTER_LINES = 3
+
+
+def clean_document_text(text: str) -> str:
+    """Shorten separator runs and collapse spaces and blank lines; words are unchanged."""
+    text = _SEPARATOR_RUN.sub(r"\1", text)
+    text = re.sub(r"[ \t\u00a0]+", " ", text)
+    return re.sub(r" *\n[ \n]*", "\n", text).strip()
+
+
+def clean_document_pages(page_texts: list[str]) -> list[str]:
+    """Clean each page and drop repeated headers and footers.
+
+    A line is treated as a header or footer only when it sits within the first
+    or last few lines of at least half of the pages (documents of 3+ pages), so
+    repeated body text such as form answers is kept.
+    """
+    pages = [clean_document_text(text).split("\n") for text in page_texts]
+    if len(pages) < 3:
+        return ["\n".join(lines) for lines in pages]
+    edge_counts = Counter(
+        line
+        for lines in pages
+        for line in set(lines[:_HEADER_FOOTER_LINES] + lines[-_HEADER_FOOTER_LINES:])
+        if line
+    )
+    repeated = {line for line, count in edge_counts.items() if count >= len(pages) / 2}
+    cleaned = []
+    for lines in pages:
+        edge_positions = set(range(min(_HEADER_FOOTER_LINES, len(lines)))) | set(
+            range(max(len(lines) - _HEADER_FOOTER_LINES, 0), len(lines))
+        )
+        cleaned.append("\n".join(
+            line for position, line in enumerate(lines)
+            if not (position in edge_positions and line in repeated)
+        ))
+    return cleaned
+
+
+def parse_prioritization(
+    response: str, expected_ids: list[str],
+) -> tuple[list[dict], list[dict]]:
+    """Return one record per expected ID plus warnings about the model's ID handling.
+
+    Unknown IDs are dropped, repeated IDs keep their highest priority and are
+    marked uncertain, and missing IDs default to an uncertain maybe. Each case
+    is reported as a warning rather than an error; malformed records still raise.
+    """
     if not isinstance(response, str):
         raise TypeError("The prioritization response must be text.")
 
@@ -91,34 +141,48 @@ def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
         raise ValueError("Prioritization response 'documents' must be an array.")
 
     by_id = {}
+    duplicate_ids = []
+    unexpected_ids = []
     required_fields = {"id", "priority", "uncertain", "reason"}
     for record in records:
         if not isinstance(record, dict) or set(record) != required_fields:
             raise ValueError("Each prioritization record must contain id, priority, uncertain, and reason.")
         document_id = record["id"]
+        # Numeric IDs are accepted because callers may send documents as numbers.
+        if type(document_id) is int:
+            document_id = str(document_id)
         if not isinstance(document_id, str) or not document_id.strip():
             raise ValueError("Prioritization document IDs must be non-empty strings.")
-        if document_id in by_id:
-            raise ValueError(f"Prioritization response repeats document ID {document_id!r}.")
-        if record["priority"] not in {"must", "maybe", "skip"}:
+        document_id = document_id.strip()
+        if record["priority"] not in _PRIORITY_RANK:
             raise ValueError(f"Invalid priority for document {document_id!r}.")
         if type(record["uncertain"]) is not bool:
             raise ValueError(f"uncertain must be a boolean for document {document_id!r}.")
         if not isinstance(record["reason"], str) or not record["reason"].strip():
             raise ValueError(f"A non-empty reason is required for document {document_id!r}.")
-        by_id[document_id] = {
+        if document_id not in expected_ids:
+            if document_id not in unexpected_ids:
+                unexpected_ids.append(document_id)
+            continue
+        parsed = {
             "id": document_id,
             "priority": record["priority"],
             "uncertain": record["uncertain"],
             "reason": record["reason"].strip(),
         }
+        previous = by_id.get(document_id)
+        if previous is not None:
+            if document_id not in duplicate_ids:
+                duplicate_ids.append(document_id)
+            if _PRIORITY_RANK[parsed["priority"]] > _PRIORITY_RANK[previous["priority"]]:
+                previous.update(priority=parsed["priority"], reason=parsed["reason"])
+            previous["uncertain"] = True
+            previous["duplicate_in_response"] = True
+            continue
+        by_id[document_id] = parsed
 
-    unexpected = sorted(set(by_id) - set(expected_ids))
-    if unexpected:
-        raise ValueError(
-            "Prioritization response contains unexpected IDs: " + ", ".join(unexpected) + "."
-        )
-    for document_id in sorted(set(expected_ids) - set(by_id)):
+    missing_ids = [document_id for document_id in expected_ids if document_id not in by_id]
+    for document_id in missing_ids:
         by_id[document_id] = {
             "id": document_id,
             "priority": "maybe",
@@ -126,7 +190,83 @@ def parse_prioritization(response: str, expected_ids: list[str]) -> list[dict]:
             "reason": "The model returned no prioritization for this document; defaulted to maybe.",
             "missing_from_response": True,
         }
-    return [by_id[document_id] for document_id in expected_ids]
+
+    warnings = []
+    if missing_ids:
+        warnings.append({
+            "type": "missing_document_prioritizations",
+            "document_ids": missing_ids,
+            "message": "Missing model priorities defaulted to maybe; these documents were not selected unless include_maybe is true.",
+        })
+    if duplicate_ids:
+        warnings.append({
+            "type": "duplicate_document_prioritizations",
+            "document_ids": duplicate_ids,
+            "message": "The model prioritized these documents more than once; the highest priority was kept and marked uncertain.",
+        })
+    if unexpected_ids:
+        warnings.append({
+            "type": "unexpected_document_ids",
+            "returned_ids": unexpected_ids,
+            "message": "The model returned IDs that were not supplied; those records were ignored.",
+        })
+    return [by_id[document_id] for document_id in expected_ids], warnings
+
+
+def _compile_rule_patterns(value: object, name: str) -> list[re.Pattern]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        not isinstance(pattern, str) or not pattern.strip() for pattern in value
+    ):
+        raise ValueError(f"{name} must be a list of non-empty regular expressions.")
+    compiled = []
+    for pattern in value:
+        try:
+            compiled.append(re.compile(pattern.strip(), re.IGNORECASE))
+        except re.error as error:
+            raise ValueError(f"{name} contains an invalid pattern {pattern!r}: {error}") from error
+    return compiled
+
+
+def _normalise_rule_text(value: object) -> str:
+    """Lower-case text and reduce punctuation and repeated spaces to single spaces."""
+    text = value if isinstance(value, str) else ""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+
+
+def match_document_priority_rule(
+    document: dict, must_patterns: list[re.Pattern], skip_patterns: list[re.Pattern],
+) -> dict | None:
+    """Return a configured must or skip priority for a document, or None.
+
+    Must patterns are checked against the normalised type and description and
+    win over skip patterns, which are checked against the normalised type only.
+    """
+    normalised = {
+        "type": _normalise_rule_text(document.get("type")),
+        "description": _normalise_rule_text(document.get("description")),
+    }
+    for pattern in must_patterns:
+        for field in ("type", "description"):
+            if pattern.search(normalised[field]):
+                return {
+                    "priority": "must",
+                    "reason": (
+                        f"Must by document rule '{pattern.pattern}' "
+                        f"({field}: '{document.get(field)}')."
+                    ),
+                }
+    for pattern in skip_patterns:
+        if pattern.search(normalised["type"]):
+            return {
+                "priority": "skip",
+                "reason": (
+                    f"Skipped by document type rule '{pattern.pattern}' "
+                    f"(type: '{document.get('type')}')."
+                ),
+            }
+    return None
 
 
 def _validate_default_polygon_area(value: object) -> float:
@@ -158,6 +298,12 @@ def load_prioritization_config(config_path: str | Path | None = None) -> dict:
         "include_maybe",
         "include_attachments",
         "default_polygon_area_square_metres",
+        "pre_screening_batch_size",
+        "max_concurrent_pre_screening_calls",
+        "max_pre_screening_batch_characters",
+        "clean_document_text",
+        "must_document_patterns",
+        "skip_document_type_patterns",
     }
     if not isinstance(settings, dict) or settings.keys() - allowed:
         raise ValueError(
@@ -174,6 +320,24 @@ def load_prioritization_config(config_path: str | Path | None = None) -> dict:
     include_attachments = settings.get("include_attachments", True)
     if type(include_attachments) is not bool:
         raise ValueError("include_attachments must be true or false.")
+    pre_screening_batch_size = settings.get("pre_screening_batch_size", 3)
+    if type(pre_screening_batch_size) is not int or pre_screening_batch_size < 1:
+        raise ValueError("pre_screening_batch_size must be a positive integer.")
+    max_concurrent_pre_screening_calls = settings.get("max_concurrent_pre_screening_calls", 3)
+    if type(max_concurrent_pre_screening_calls) is not int or max_concurrent_pre_screening_calls < 1:
+        raise ValueError("max_concurrent_pre_screening_calls must be a positive integer.")
+    max_pre_screening_batch_characters = settings.get("max_pre_screening_batch_characters", 150_000)
+    if type(max_pre_screening_batch_characters) is not int or max_pre_screening_batch_characters < 1:
+        raise ValueError("max_pre_screening_batch_characters must be a positive integer.")
+    clean_text = settings.get("clean_document_text", True)
+    if type(clean_text) is not bool:
+        raise ValueError("clean_document_text must be true or false.")
+    must_document_patterns = _compile_rule_patterns(
+        settings.get("must_document_patterns"), "must_document_patterns",
+    )
+    skip_document_type_patterns = _compile_rule_patterns(
+        settings.get("skip_document_type_patterns"), "skip_document_type_patterns",
+    )
 
     default_polygon_area_square_metres = _validate_default_polygon_area(
         settings.get("default_polygon_area_square_metres", DEFAULT_POLYGON_AREA_SQUARE_METRES)
@@ -194,6 +358,12 @@ def load_prioritization_config(config_path: str | Path | None = None) -> dict:
         "include_maybe": include_maybe,
         "include_attachments": include_attachments,
         "default_polygon_area_square_metres": default_polygon_area_square_metres,
+        "pre_screening_batch_size": pre_screening_batch_size,
+        "max_concurrent_pre_screening_calls": max_concurrent_pre_screening_calls,
+        "max_pre_screening_batch_characters": max_pre_screening_batch_characters,
+        "clean_document_text": clean_text,
+        "must_document_patterns": must_document_patterns,
+        "skip_document_type_patterns": skip_document_type_patterns,
         "lpa_settings": lpa_settings,
     }
 
@@ -254,7 +424,16 @@ def _validate_signal(value: object, label: str) -> None:
     )
     if not isinstance(signal["classification"], str) or signal["classification"] not in {"yes", "no_signal"}:
         raise ValueError(f"{label} has an invalid classification.")
-    if not isinstance(signal["confidence"], str) or signal["confidence"] not in _CONFIDENCE_LEVELS:
+    if isinstance(signal["confidence"], str) and signal["confidence"].strip().casefold() == "null":
+        signal["confidence"] = None
+    # Decision ignores unknown confidences, so a missing one is tolerated only
+    # when nothing was found; a positive signal must state its confidence.
+    missing_confidence_allowed = (
+        signal["confidence"] is None and signal["classification"] == "no_signal"
+    )
+    if not missing_confidence_allowed and (
+        not isinstance(signal["confidence"], str) or signal["confidence"] not in _CONFIDENCE_LEVELS
+    ):
         raise ValueError(f"{label} has an invalid confidence.")
     if not isinstance(signal["reason"], str):
         raise ValueError(f"{label} reason must be a string.")

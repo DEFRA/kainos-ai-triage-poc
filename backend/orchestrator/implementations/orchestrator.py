@@ -97,10 +97,15 @@ def run_consultation(
 
     # Run document screening stage
     try:
+        document_model_config = model_configs.get("document_screening", model_config_path)
+        # The standard agent screens all documents in one call with the extraction
+        # prompt, which matches the S3 agent's pre-screening call.
+        if isinstance(document_model_config, dict):
+            document_model_config = document_model_config["pre_screening"]
         document_screening_arguments = {
             "reference": reference,
             "base_url": base_url,
-            "model_config_path": model_configs.get("document_screening", model_config_path),
+            "model_config_path": document_model_config,
             "output_directory": output_directory,
         }
         if consultation_date is not None:

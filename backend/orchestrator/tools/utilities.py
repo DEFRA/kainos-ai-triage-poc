@@ -12,7 +12,15 @@ import yaml
 STAGES = ("case_intake", "document_screening", "spatial_screening", "decision")
 
 
-def load_model_configs(config_path: Path) -> dict[str, Path]:
+DOCUMENT_SCREENING_MODEL_CALLS = ("prioritization", "pre_screening", "screening")
+
+
+def load_model_configs(config_path: Path) -> dict[str, Path | dict[str, Path]]:
+    """Load per-stage model config paths, resolving relative paths from the project root.
+
+    document_screening may be one path or a mapping with a path for each of
+    prioritization, pre_screening and screening.
+    """
     with config_path.open(encoding="utf-8") as config_file:
         config = yaml.safe_load(config_file)
     model_configs = config.get("model_configs", {})
@@ -21,14 +29,30 @@ def load_model_configs(config_path: Path) -> dict[str, Path]:
     supported_stages = {"case_intake", "document_screening", "spatial_screening"}
     if model_configs.keys() - supported_stages:
         raise ValueError("'model_configs' contains an unsupported stage.")
+    project_root = Path(__file__).resolve().parents[3]
+
+    def resolve(label: str, value: object) -> Path:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Model config for {label} must be a non-empty path or null.")
+        path = Path(value.strip()).expanduser()
+        return path if path.is_absolute() else project_root / path
+
     result = {}
     for stage, value in model_configs.items():
         if value is None:
             continue
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"Model config for {stage} must be a non-empty path or null.")
-        path = Path(value.strip()).expanduser()
-        result[stage] = path if path.is_absolute() else Path(__file__).resolve().parents[3] / path
+        if stage == "document_screening" and isinstance(value, dict):
+            if set(value) != set(DOCUMENT_SCREENING_MODEL_CALLS):
+                raise ValueError(
+                    "Model configs for document_screening must contain exactly: "
+                    f"{', '.join(DOCUMENT_SCREENING_MODEL_CALLS)}."
+                )
+            result[stage] = {
+                call: resolve(f"document_screening.{call}", value[call])
+                for call in DOCUMENT_SCREENING_MODEL_CALLS
+            }
+        else:
+            result[stage] = resolve(stage, value)
     return result
 
 

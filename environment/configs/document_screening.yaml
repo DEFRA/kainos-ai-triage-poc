@@ -3,6 +3,49 @@ document_screening:
   include_maybe: false
   include_attachments: false
   default_polygon_area_square_metres: 50000
+  # S3 document agent only: downloaded documents per pre-screening model call,
+  # and how many of those calls run at once.
+  pre_screening_batch_size: 3
+  max_concurrent_pre_screening_calls: 3
+  # A batch also closes before it would exceed this many characters of prepared
+  # document JSON; a single larger document is screened alone. Real tokens were
+  # roughly characters / 2 for planning documents: 141k passed, 246k failed.
+  max_pre_screening_batch_characters: 150000
+  # Shorten separator runs, collapse whitespace and drop repeated PDF page
+  # headers/footers before text is sent to the model.
+  clean_document_text: true
+  # S3 document agent only: regular expressions applied before model ranking.
+  # Text is lower-cased and punctuation runs become single spaces before
+  # matching (e.g. "Plans - Superseded" -> "plans superseded"). Must patterns
+  # check type and description and win over skip patterns, which check type only.
+  # Matched documents are not sent to the ranking model.
+  must_document_patterns:
+    - 'application ?forms?'
+    - 'location plans?'
+    - 'planning statement'
+    - 'cover(ing)? letter'
+  skip_document_type_patterns:
+    - 'consultee'
+    - 'consultation (replies|responses)'
+    - '\bresponses?\b'
+    - 'comments?\b'
+    - 'representation'
+    - 'objection'
+    - 'petition'
+    - 'correspondence'
+    - 'superseded'
+    - 'photo'
+    - 'site notice|press'
+    - 'notification list'
+    - '\bcil\b|section 106'
+    - '\bfee\b'
+    - 'certificate of ownership'
+    - '\blegal\b'
+    - 'decision notice'
+    - 'committee report|member call in'
+    - 'appeal|appellant'
+    - '(in)?valid (application )?letter'
+    - 'public register|work card|attachment summary'
 
 lpa:
   request_interval_seconds: 0

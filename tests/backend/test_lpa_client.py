@@ -113,6 +113,25 @@ def search_responses(token="private-token"):
     return [response(form), response(SUMMARY)]
 
 
+def advanced_search_responses():
+    form = """<form id="advancedSearchForm" method="post"
+    action="/online-applications/advancedSearchResults.do?action=firstPage">
+    <input type="hidden" name="_csrf" value="advanced-token">
+    <input type="text" name="searchCriteria.reference" value="">
+    <select name="searchCriteria.caseType"><option value="">All</option><option value="FUL">Full</option></select>
+    <select name="searchCriteria.appealType" multiple><option value="AEA">AEA</option></select>
+    <select name="searchCriteria.ward"><option value="">All</option><option value="NORTH" selected>North</option></select>
+    <input type="checkbox" name="searchCriteria.unchecked" value="yes">
+    <input type="hidden" name="caseAddressType" value="Application">
+    <input type="hidden" name="searchType" value="Application">
+    <input type="submit" name="org.apache.struts.taglib.html.CANCEL" value="Reset">
+    </form>"""
+    return [
+        response(form, url=BASE_URL + "search.do?action=advanced"),
+        response(SUMMARY, url=BASE_URL + "applicationDetails.do?activeTab=summary&keyVal=KEY"),
+    ]
+
+
 class PublicAccessClientTests(unittest.TestCase):
     def setUp(self):
         settings_patch = patch("backend.src.document_screening.tools.lpa_client._load_lpa_settings", return_value={})
@@ -349,13 +368,36 @@ class PublicAccessClientTests(unittest.TestCase):
         self.assertEqual(posts[0].kwargs["timeout"], 12)
 
     def test_search_rejects_wrong_reference_and_non_summary_pages(self):
-        for page in (SUMMARY.replace(REFERENCE, "OTHER"), "<title>No results</title>"):
+        for page in (SUMMARY.replace(REFERENCE, "OTHER"), "<title>Search Results</title>"):
             with self.subTest(page=page), patch.object(
                 self.client.session, "request",
-                side_effect=[search_responses()[0], response(page)],
+                side_effect=[
+                    search_responses()[0], response(page),
+                    advanced_search_responses()[0], response(page),
+                ],
             ):
-                with self.assertRaisesRegex(RuntimeError, "page title"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Neither search found.*simple search.*advanced search",
+                ):
                     self.client.search(REFERENCE)
+
+    def test_search_falls_back_to_advanced_form_fields(self):
+        with patch.object(self.client.session, "request", side_effect=(
+            [search_responses()[0], response("<title>Search Results</title>")]
+            + advanced_search_responses()
+        )) as request:
+            self.assertEqual(self.client.search(REFERENCE), "KEY")
+        get_advanced, post_advanced = request.call_args_list[2:]
+        self.assertEqual(get_advanced.args[1], BASE_URL + "search.do?action=advanced")
+        self.assertEqual(post_advanced.args[1], BASE_URL + "advancedSearchResults.do?action=firstPage")
+        self.assertEqual(post_advanced.kwargs["data"], [
+            ("_csrf", "advanced-token"),
+            ("searchCriteria.reference", REFERENCE),
+            ("searchCriteria.caseType", ""),
+            ("searchCriteria.ward", "NORTH"),
+            ("caseAddressType", "Application"),
+            ("searchType", "Application"),
+        ])
 
     def test_missing_form_and_http_errors_are_rejected(self):
         with patch.object(self.client.session, "request", return_value=response("<title>Error</title>")):

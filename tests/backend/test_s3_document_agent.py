@@ -1,5 +1,4 @@
 import ast
-import copy
 import json
 import tempfile
 import unittest
@@ -15,6 +14,7 @@ from backend.src.document_screening.implementations.s3_document_agent import (
     run_s3_document_screening,
 )
 from backend.src.utilities.document_parser import ParsedPage
+from backend.src.utilities.llm_client import _usage_collector, collect_llm_usage
 from document_screening_fixtures import valid_document_findings
 
 
@@ -56,10 +56,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.lpa.download_documents_concurrently.side_effect = self.download
         self.llm = Mock()
         self.llm.config = SimpleNamespace(provider="ollama", model="vision", max_output_tokens=1500)
-        self.llm.generate.side_effect = lambda *args, **kwargs: (
-            json.dumps(self.findings) if "attachments" in kwargs
-            else json.dumps({"documents": self.ranking})
-        )
+        self.llm.generate.side_effect = self.generate
         self.objects = {}
         self.s3 = Mock()
         self.s3.put_object.side_effect = self.put_object
@@ -67,10 +64,30 @@ class S3DocumentAgentTests(unittest.TestCase):
         contexts = ExitStack()
         self.addCleanup(contexts.close)
         contexts.enter_context(patch(f"{MODULE}.PublicAccessClient", return_value=self.lpa))
-        llm_factory = contexts.enter_context(patch(f"{MODULE}.LLMClient"))
-        llm_factory.return_value.__enter__.return_value = self.llm
+        self.llm_factory = contexts.enter_context(patch(f"{MODULE}.LLMClient"))
+        self.llm_factory.return_value.__enter__.return_value = self.llm
+        contexts.enter_context(patch(
+            f"{MODULE}.ModelConfig.from_yaml", side_effect=lambda path: self.llm.config,
+        ))
         self.parser = contexts.enter_context(patch(f"{MODULE}.parse_pdf", side_effect=self.parse_pdf))
         self.client_factory = contexts.enter_context(patch(f"{MODULE}.create_s3_client", return_value=self.s3))
+
+    def numbered_ranking(self, records):
+        """Return a ranking response using the numbers sent to the model, as a real model would."""
+        numbers = {
+            str(document["id"]): number
+            for number, document in enumerate(self.metadata["documents"], start=1)
+        }
+        return json.dumps({"documents": [
+            {**record, "id": numbers[record["id"]]} for record in records
+        ]})
+
+    def generate(self, prompt, **kwargs):
+        if prompt.startswith("Prioritize"):
+            return self.numbered_ranking(self.ranking)
+        if prompt.startswith("Pre-screening batch"):
+            return f"Unvalidated output for {prompt.split('.', 1)[0]}"
+        return json.dumps(self.findings)
 
     def get_metadata(self, application_key, directory, *, ignore_after):
         self.output_directory = directory
@@ -152,6 +169,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         )
         expected = {
             "11.pdf", "rendered-pages/11-page-0001.jpg", "KEY-metadata.json",
+            "KEY-prioritization-response.txt", "pre-screening/batch-01-response.txt",
             "KEY-prioritized-document-findings.json",
             "KEY-prioritized-final-output.json", "KEY-prioritized-document-screening.json",
         }
@@ -236,14 +254,11 @@ class S3DocumentAgentTests(unittest.TestCase):
     def test_bedrock_usage_is_preserved_in_result_artifact(self):
         self.llm.config.provider = "bedrock"
 
-        def generate(*args, **kwargs):
+        def generate(prompt, **kwargs):
             self.llm.last_usage = {
                 "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
             }
-            return (
-                json.dumps(self.findings) if "attachments" in kwargs
-                else json.dumps({"documents": self.ranking})
-            )
+            return self.generate(prompt, **kwargs)
 
         self.llm.generate.side_effect = generate
 
@@ -253,7 +268,9 @@ class S3DocumentAgentTests(unittest.TestCase):
             "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
         }
         self.assertEqual(result["usage"], {
-            "prioritization": expected_usage, "screening": expected_usage,
+            "prioritization": expected_usage,
+            "pre_screening": [expected_usage],
+            "screening": expected_usage,
         })
         stored_result = json.loads(
             self.objects["case/run/KEY-prioritized-document-screening.json"]
@@ -355,7 +372,8 @@ class S3DocumentAgentTests(unittest.TestCase):
 
     def test_missing_prioritization_is_logged_and_defaults_to_maybe(self):
         self.llm.generate.side_effect = [
-            json.dumps({"documents": self.ranking[:2]}),
+            self.numbered_ranking(self.ranking[:2]),
+            "Unvalidated batch output",
             json.dumps(self.findings),
         ]
 
@@ -388,30 +406,140 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertIn("Document 11 was not downloaded: download failed", result["document_findings"]["limitations"])
         self.assertEqual(result["sources"], [])
 
-    def test_screening_result_matches_local_prioritized_implementation(self):
-        from backend.src.document_screening.implementations.prioritized_document_agent import (
-            run_prioritized_document_screening,
+    def test_documents_are_pre_screened_in_batches_then_consolidated(self):
+        config_path = self.root / "batched.yaml"
+        config_path.write_text(
+            "document_screening:\n  include_attachments: true\n"
+            "  pre_screening_batch_size: 2\n  max_concurrent_pre_screening_calls: 2\nlpa: {}\n",
+            encoding="utf-8",
+        )
+        self.metadata["documents"] += [
+            {"id": str(document_id), "published": "20 Oct 2026", "type": "Plan",
+             "drawing_number": None, "description": "Plan",
+             "url": f"https://example.test/{document_id}.pdf"}
+            for document_id in (14, 15)
+        ]
+        self.ranking = [
+            {"id": document["id"], "priority": "must", "uncertain": False, "reason": "Relevant"}
+            for document in self.metadata["documents"]
+        ]
+        usage_seen_by_batches = []
+
+        def generate(prompt, **kwargs):
+            if prompt.startswith("Pre-screening batch"):
+                usage_seen_by_batches.append(_usage_collector.get())
+            return self.generate(prompt, **kwargs)
+
+        self.llm.generate.side_effect = generate
+
+        with collect_llm_usage() as usage:
+            result = self.run_agent(s3_client=self.s3, implementation_config_path=config_path)
+
+        self.assertEqual(usage_seen_by_batches, [usage] * 3)
+        calls = self.llm.generate.call_args_list
+        batch_calls = sorted(
+            (call for call in calls if call.args[0].startswith("Pre-screening batch")),
+            key=lambda call: call.args[0],
+        )
+        self.assertEqual(
+            [[source["id"] for source in self.prompt_source_data(call.args[0])["sources"]]
+             for call in batch_calls],
+            [["11", "12"], ["13", "14"], ["15"]],
+        )
+        for call in batch_calls:
+            attachments = call.kwargs["attachments"]
+            sources = self.prompt_source_data(call.args[0])["sources"]
+            self.assertEqual(
+                [source["pages"][0]["attachment_number"] for source in sources],
+                list(range(1, len(attachments) + 1)),
+            )
+            self.assertEqual(
+                attachments,
+                [self.output_directory / "rendered-pages" / f"{source['id']}-page-0001.jpg"
+                 for source in sources],
+            )
+
+        screening_call = calls[-1]
+        self.assertNotIn("attachments", screening_call.kwargs)
+        self.assertIn("## Consolidation rules", screening_call.kwargs["system_prompt"])
+        self.assertIn("## Output", screening_call.kwargs["system_prompt"])
+        for batch_number in (1, 2, 3):
+            self.assertIn(
+                f"Unvalidated output for Pre-screening batch {batch_number} of 3",
+                screening_call.args[0],
+            )
+        self.assertEqual(
+            [(batch["batch_number"], batch["document_ids"]) for batch in result["pre_screening"]],
+            [(1, ["11", "12"]), (2, ["13", "14"]), (3, ["15"])],
+        )
+        self.assertEqual([source["pre_screening_batch"] for source in result["sources"]], [1, 1, 2, 2, 3])
+        self.assertEqual(
+            self.objects["case/run/pre-screening/batch-03-response.txt"],
+            b"Unvalidated output for Pre-screening batch 3 of 3",
+        )
+        self.assertNotIn("pre_screening", result["final_output"])
+
+    def test_model_configs_can_be_one_path_or_one_path_per_call(self):
+        model_configs = {
+            "prioritization": "ranking.yaml",
+            "pre_screening": "batches.yaml",
+            "screening": "consolidation.yaml",
+        }
+        result = run_s3_document_screening(
+            "25/123", "https://example.test/", model_configs,
+            bucket="bucket", prefix="run", s3_client=self.s3,
+            implementation_config_path=self.default_implementation_config,
+        )
+        self.assertEqual(
+            [call.args[0] for call in self.llm_factory.call_args_list],
+            [Path("ranking.yaml"), Path("batches.yaml"), Path("consolidation.yaml")],
+        )
+        self.assertEqual(
+            {call: model["config_path"] for call, model in result["models"].items()},
+            model_configs,
         )
 
-        original_metadata = copy.deepcopy(self.metadata)
-        s3_result = self.run_agent(s3_client=self.s3)
-        self.metadata = original_metadata
-        local_directory = self.root / "local"
-        local_directory.mkdir()
-        with (
-            patch("backend.src.document_screening.implementations.prioritized_document_agent.PublicAccessClient", return_value=self.lpa),
-            patch("backend.src.document_screening.implementations.prioritized_document_agent.LLMClient") as llm_factory,
-            patch("backend.src.document_screening.implementations.prioritized_document_agent.parse_pdf", side_effect=self.parse_pdf),
-        ):
-            llm_factory.return_value.__enter__.return_value = self.llm
-            local_result = run_prioritized_document_screening(
-                "25/123", "https://example.test/", "model.yaml", local_directory,
-                implementation_config_path=self.default_implementation_config,
-            )
-        s3_comparison = {key: copy.deepcopy(value) for key, value in s3_result.items() if key != "storage"}
-        for source in s3_comparison["sources"]:
-            source.pop("s3")
-        self.assertEqual(local_result, s3_comparison)
+        self.llm_factory.reset_mock()
+        self.objects.clear()
+        self.run_agent(s3_client=self.s3)
+        self.assertEqual(
+            [call.args[0] for call in self.llm_factory.call_args_list], [Path("model.yaml")] * 3,
+        )
+
+    def test_invalid_model_configs_stop_before_any_work(self):
+        for model_configs in ({"prioritization": "a.yaml", "screening": "b.yaml"}, "", 123):
+            with self.subTest(model_configs=model_configs):
+                with self.assertRaisesRegex(ValueError, "model_configs|non-empty path"):
+                    run_s3_document_screening(
+                        "25/123", "https://example.test/", model_configs,
+                        bucket="bucket", prefix="run", s3_client=self.s3,
+                    )
+        self.lpa.search.assert_not_called()
+
+    def test_failed_pre_screening_batch_stops_screening_and_uploads_completed_batches(self):
+        config_path = self.root / "batched.yaml"
+        config_path.write_text(
+            "document_screening:\n  pre_screening_batch_size: 1\n"
+            "  max_concurrent_pre_screening_calls: 1\nlpa: {}\n",
+            encoding="utf-8",
+        )
+        self.ranking[1]["priority"] = "must"
+
+        def generate(prompt, **kwargs):
+            if prompt.startswith("Pre-screening batch 2"):
+                raise RuntimeError("context length exceeded")
+            return self.generate(prompt, **kwargs)
+
+        self.llm.generate.side_effect = generate
+
+        with self.assertRaisesRegex(RuntimeError, "context length exceeded"):
+            self.run_agent(s3_client=self.s3, implementation_config_path=config_path)
+
+        self.assertIn("case/run/pre-screening/batch-01-response.txt", self.objects)
+        self.assertFalse(any(
+            "Pre-screening batch" not in call.args[0] and not call.args[0].startswith("Prioritize")
+            for call in self.llm.generate.call_args_list
+        ))
 
     def test_ranking_failure_uploads_metadata_and_stops_before_download(self):
         self.llm.generate.side_effect = RuntimeError("ranking failed")
@@ -420,8 +548,117 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.assertEqual(set(self.objects), {"case/run/KEY-metadata.json"})
         self.lpa.download_documents_concurrently.assert_not_called()
 
+    def test_large_documents_get_their_own_batch_and_text_is_cleaned(self):
+        config_path = self.root / "sized.yaml"
+        config_path.write_text(
+            "document_screening:\n  pre_screening_batch_size: 3\n"
+            "  max_pre_screening_batch_characters: 2000\nlpa: {}\n",
+            encoding="utf-8",
+        )
+        for document in self.ranking:
+            document["priority"] = "must"
+
+        def parse_sized_pdf(document_path, directory, **kwargs):
+            text = ("Long   report text ----- " * 200) if document_path.stem == "12" else "Short   text"
+            return [ParsedPage(document_path, 1, text, None, False)]
+
+        self.parser.side_effect = parse_sized_pdf
+
+        result = self.run_agent(s3_client=self.s3, implementation_config_path=config_path)
+
+        self.assertEqual(
+            [batch["document_ids"] for batch in result["pre_screening"]], [["11"], ["12"], ["13"]],
+        )
+        self.assertGreater(result["pre_screening"][1]["document_characters"], 2000)
+        self.assertEqual(result["sources"][0]["pages"][0]["text"], "Short text")
+        self.assertNotIn("-----", result["sources"][1]["pages"][0]["text"])
+
+    def test_malformed_prioritization_response_is_uploaded(self):
+        self.ranking[0]["priority"] = "essential"
+        with self.assertRaisesRegex(ValueError, "Invalid priority"):
+            self.run_agent(s3_client=self.s3)
+        self.assertIn("case/run/KEY-prioritization-response.txt", self.objects)
+        self.lpa.download_documents_concurrently.assert_not_called()
+
+    def test_ranking_id_problems_are_warnings_with_real_ids(self):
+        self.llm.generate.side_effect = lambda prompt, **kwargs: (
+            json.dumps({"documents": [
+                {"id": 1, "priority": "maybe", "uncertain": False, "reason": "First"},
+                {"id": "1", "priority": "must", "uncertain": False, "reason": "Repeated"},
+                {"id": 2, "priority": "skip", "uncertain": False, "reason": "Report"},
+                {"id": 99, "priority": "skip", "uncertain": False, "reason": "Invented"},
+            ]}) if prompt.startswith("Prioritize") else self.generate(prompt, **kwargs)
+        )
+
+        result = self.run_agent(s3_client=self.s3)
+
+        warnings = {
+            warning["type"]: warning for warning in result["metadata"]["prioritization_warnings"]
+        }
+        self.assertEqual(warnings["duplicate_document_prioritizations"]["document_ids"], ["11"])
+        self.assertEqual(warnings["missing_document_prioritizations"]["document_ids"], ["13"])
+        self.assertEqual(warnings["unexpected_document_ids"]["returned_ids"], ["99"])
+        first = result["prioritization"][0]
+        self.assertEqual((first["id"], first["priority"], first["uncertain"]), ("11", "must", True))
+        self.assertEqual(self.lpa.download_documents_concurrently.call_args.args[3], ["11"])
+
+    def test_document_rules_bypass_ranking_and_remaining_documents_are_renumbered(self):
+        config_path = self.root / "rules.yaml"
+        config_path.write_text(
+            "document_screening:\n"
+            "  must_document_patterns: ['location plans?']\n"
+            "  skip_document_type_patterns: ['superseded', 'photo']\n"
+            "lpa: {}\n",
+            encoding="utf-8",
+        )
+        self.metadata["documents"][1].update(type="Plans - SUPERSEDED", description="Site Location Plan")
+        ranking_prompts = []
+
+        def generate(prompt, **kwargs):
+            if prompt.startswith("Prioritize"):
+                ranking_prompts.append(prompt)
+                return json.dumps({"documents": [
+                    {"id": 1, "priority": "must", "uncertain": False, "reason": "Planning statement"},
+                ]})
+            return self.generate(prompt, **kwargs)
+
+        self.llm.generate.side_effect = generate
+
+        result = self.run_agent(s3_client=self.s3, implementation_config_path=config_path)
+
+        ranked = json.loads(ranking_prompts[0].split("\n", 1)[1])["documents"]
+        self.assertEqual([(item["id"], item["description"]) for item in ranked], [(1, "Planning")])
+        self.assertEqual(
+            [(item["id"], item["priority"], item["source"]) for item in result["prioritization"]],
+            [("11", "must", "model"), ("12", "must", "rule"), ("13", "skip", "rule")],
+        )
+        self.assertIn("location plans?", result["prioritization"][1]["reason"])
+        self.assertIn("photo", result["prioritization"][2]["reason"])
+        self.assertEqual(self.lpa.download_documents_concurrently.call_args.args[3], ["11", "12"])
+        self.assertEqual(result["metadata"]["documents"][2]["priority_source"], "rule")
+
+    def test_all_documents_skipped_by_rules_warns_without_ranking_call(self):
+        config_path = self.root / "skip-all.yaml"
+        config_path.write_text(
+            "document_screening:\n  skip_document_type_patterns: ['statement|report|photo']\nlpa: {}\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_agent(s3_client=self.s3, implementation_config_path=config_path)
+
+        self.assertFalse(any(
+            call.args[0].startswith("Prioritize") for call in self.llm.generate.call_args_list
+        ))
+        self.assertEqual(
+            result["metadata"]["prioritization_warnings"][0]["type"], "all_documents_skipped_by_rules",
+        )
+        self.assertEqual(self.lpa.download_documents_concurrently.call_args.args[3], [])
+        self.assertNotIn("KEY-prioritization-response.txt", result["storage"]["objects"])
+
     def test_invalid_response_retains_partial_artifacts(self):
-        self.llm.generate.side_effect = [json.dumps({"documents": self.ranking}), "not JSON"]
+        self.llm.generate.side_effect = [
+            self.numbered_ranking(self.ranking), "Unvalidated batch output", "not JSON",
+        ]
         with self.assertRaisesRegex(ValueError, "s3://bucket/case/run/KEY-prioritized-response.txt"):
             self.run_agent(s3_client=self.s3)
         self.assertEqual(self.objects["case/run/KEY-prioritized-response.txt"], b"not JSON")
@@ -464,7 +701,7 @@ class S3DocumentAgentTests(unittest.TestCase):
         self.lpa.search.assert_not_called()
 
     def test_no_import_of_prioritized_implementation(self):
-        path = Path(__file__).resolve().parents[1] / "backend/src/document_screening/implementations/s3_document_agent.py"
+        path = Path(__file__).resolve().parents[2] / "backend/src/document_screening/implementations/s3_document_agent.py"
         imports = [node for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
                    if isinstance(node, (ast.Import, ast.ImportFrom))]
         self.assertFalse(any("prioritized_document_agent" in ast.unparse(node) for node in imports))

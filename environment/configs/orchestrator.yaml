@@ -1,6 +1,10 @@
 model_configs:
   case_intake: environment/model_configs/bedrock-aws-nova-pro.yaml
-  document_screening: environment/model_configs/bedrock-aws-gemma-3-27b.yaml
+  # One path for all three document-screening model calls, or one path per call.
+  document_screening:
+    prioritization: environment/model_configs/bedrock-aws-gemma-3-27b.yaml
+    pre_screening: environment/model_configs/bedrock-aws-gemma-3-27b.yaml
+    screening: environment/model_configs/bedrock-aws-gemma-3-27b.yaml
   spatial_screening: environment/model_configs/bedrock-aws-gpt-oss-120b.yaml
 
 required_fields:

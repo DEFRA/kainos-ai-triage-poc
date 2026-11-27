@@ -18,7 +18,10 @@ case-intake signals used by the decision stage.
 
 Optional `model_configs` entries in [orchestrator.yaml](environment/configs/orchestrator.yaml)
 select separate model YAML files for `case_intake`, `document_screening`, and
-`spatial_screening`. Use absolute paths or paths relative to the repository root;
+`spatial_screening`. `document_screening` may be one path or a mapping with
+`prioritization`, `pre_screening` and `screening` paths for the S3 document
+agent's three model calls; the standard API agent uses the `pre_screening` entry.
+Use absolute paths or paths relative to the repository root;
 `null` or omitted entries use the orchestrator's existing `model_config_path`.
 The local API receives case intake as input, and the decision stage is deterministic.
 
@@ -412,8 +415,36 @@ still propagate; no oversized request is silently truncated by the agent.
 ### S3 document screening
 
 The standalone [S3 implementation](backend/src/document_screening/implementations/s3_document_agent.py)
-performs the same prioritized screening sequence and stores its generated artifacts
-in S3. It does not change the document screening selected by the API orchestrator.
+prioritizes documents, then screens them in two model passes and stores its
+generated artifacts in S3. It does not change the document screening selected by
+the API orchestrator.
+
+1. **Prioritization** ranks the document list from metadata.
+2. **Pre-screening** sends fixed-size batches of downloaded documents, each with
+   the [extraction prompt](backend/src/document_screening/prompts/screen_documents.md),
+   in concurrent calls. Their outputs are not validated.
+3. **Screening** sends every batch output to the
+   [consolidation prompt](backend/src/document_screening/prompts/consolidate_findings.md),
+   whose output is validated and merged as the final findings.
+
+`pre_screening_batch_size`, `max_pre_screening_batch_characters` and
+`max_concurrent_pre_screening_calls` in
+[document_screening.yaml](environment/configs/document_screening.yaml) control
+batching: a batch closes at the document limit or before exceeding the character
+limit, and a single larger document is screened alone. `clean_document_text`
+collapses whitespace, shortens separator runs and drops repeated PDF page
+headers/footers before text is sent. A failed batch stops the stage; retries are only the model config's
+`max_attempts`. One very large document can still exceed a model's context.
+
+Before ranking, `must_document_patterns` (matched against each document's type and
+description) and `skip_document_type_patterns` (matched against its type) in the
+same file assign `must` or `skip` without the model; must wins when both match.
+Text is lower-cased and punctuation becomes spaces before matching. Matched
+documents are recorded with `priority_source: "rule"` and the rule in their
+reason. The remaining documents are sent to the ranking model as `1..N` and mapped
+back to their LPA IDs. Missing, repeated or invented IDs in the ranking become
+`prioritization_warnings` in the metadata rather than errors, as does every
+document matching a skip rule.
 
 ```python
 from backend.src.document_screening.implementations.s3_document_agent import (
@@ -424,7 +455,12 @@ from backend.src.utilities.s3_utils import create_s3_client
 result = run_s3_document_screening(
   reference="25/03341/CDPN",
   base_url="https://planningapps.sheffield.gov.uk/online-applications/",
-  model_config_path="environment/model_configs/gemma3-12b.yaml",
+  # Or one path for all three calls.
+  model_configs={
+    "prioritization": "environment/model_configs/gemma3-12b.yaml",
+    "pre_screening": "environment/model_configs/gemma3-12b.yaml",
+    "screening": "environment/model_configs/gemma3-12b.yaml",
+  },
   bucket="my-consultation-bucket",
   prefix="consultations/example/run-001",
   s3_client=create_s3_client(region="eu-west-2", profile_name="my-profile"),
@@ -440,7 +476,7 @@ are overwritten, and a reused prefix can also retain stale objects from earlier
 runs. S3 bucket versioning, if enabled, is independent of this implementation.
 
 Under the prefix, the implementation stores the metadata JSON, successfully
-downloaded documents, `rendered-pages/` images, the full prioritized run record,
+downloaded documents, `rendered-pages/` images, the raw prioritization response, `pre-screening/` batch responses, the full prioritized run record,
 and the final-output JSON. Relative `saved_as` names in the metadata and sources
 are relative to that prefix. The returned `storage.objects` maps each relative
 artifact path to its bucket, key, S3 URI and version; the persisted run record

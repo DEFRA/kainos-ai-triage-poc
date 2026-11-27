@@ -1,12 +1,67 @@
 import json
+import re
+import tempfile
 import unittest
+from pathlib import Path
 
 from backend.src.document_screening.tools.utilities import (
     add_polygon_metadata,
+    clean_document_pages,
+    clean_document_text,
+    load_prioritization_config,
+    match_document_priority_rule,
     merge_document_findings,
     parse_document_findings,
 )
 from document_screening_fixtures import valid_document_findings
+
+
+class DocumentTextCleaningTests(unittest.TestCase):
+    def test_cleaning_shortens_noise_and_drops_only_edge_headers_and_footers(self):
+        self.assertEqual(
+            clean_document_text("  Site   area\u00a0 1.2 ha\n\n\n-----\nTotal ........ 5  "),
+            "Site area 1.2 ha\n-\nTotal . 5",
+        )
+        pages = [
+            f"ACME Ecology Ltd\nPage {number}\nIntro {number}\nYes\nBody {number}\nNo\n"
+            f"Closing {number}\nRef {number}\nConfidential"
+            for number in range(1, 5)
+        ]
+        cleaned = clean_document_pages(pages)
+        self.assertEqual(cleaned[0], "Page 1\nIntro 1\nYes\nBody 1\nNo\nClosing 1\nRef 1")
+        self.assertNotIn("ACME Ecology Ltd", "\n".join(cleaned))
+        self.assertEqual(clean_document_pages(pages[:2])[0], pages[0])
+
+
+class DocumentPriorityRuleTests(unittest.TestCase):
+    def test_rules_match_normalised_text_and_must_wins(self):
+        must = [re.compile("application ?forms?"), re.compile("cover(ing)? letter")]
+        skip = [re.compile("plans superseded"), re.compile("correspondence")]
+        cases = (
+            ({"type": "Plans - SUPERSEDED", "description": "Elevations"}, "skip"),
+            ({"type": "Correspondence", "description": "COVERING LETTER"}, "must"),
+            ({"type": "Application Details", "description": "ApplicationFormRedacted"}, "must"),
+            ({"type": "Supporting Documents", "description": "Planning statement"}, None),
+        )
+        for document, expected in cases:
+            with self.subTest(document=document):
+                rule = match_document_priority_rule(document, must, skip)
+                self.assertEqual(rule and rule["priority"], expected)
+
+    def test_invalid_rule_pattern_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            config_path.write_text(
+                "document_screening:\n  skip_document_type_patterns: ['(unclosed']\nlpa: {}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, r"skip_document_type_patterns.*'\(unclosed'"):
+                load_prioritization_config(config_path)
+
+    def test_shipped_rules_load(self):
+        settings = load_prioritization_config()
+        self.assertTrue(settings["must_document_patterns"])
+        self.assertTrue(settings["skip_document_type_patterns"])
 
 
 class DocumentScreeningUtilitiesTests(unittest.TestCase):
@@ -138,6 +193,27 @@ class DocumentScreeningUtilitiesTests(unittest.TestCase):
                     findings["consultation_type_signals"]["amendment"] = invalid_signal
                 with self.assertRaises(ValueError):
                     parse_document_findings(json.dumps(findings))
+
+    def test_null_signal_confidence_is_allowed_only_without_a_signal(self):
+        amendment_evidence = {"document_id": "11", "page": 1, "quote": "Amended plans"}
+        for classification, confidence, evidence, accepted in (
+            ("no_signal", None, [], True),
+            ("no_signal", "null", [], True),
+            ("yes", None, [amendment_evidence], False),
+            ("yes", "null", [amendment_evidence], False),
+        ):
+            with self.subTest(classification=classification, confidence=confidence):
+                findings = valid_document_findings()
+                findings["consultation_type_signals"]["amendment"] = {
+                    "classification": classification, "confidence": confidence,
+                    "reason": "Checked.", "evidence": evidence,
+                }
+                if accepted:
+                    parsed = parse_document_findings(json.dumps(findings))
+                    self.assertIsNone(parsed["consultation_type_signals"]["amendment"]["confidence"])
+                else:
+                    with self.assertRaisesRegex(ValueError, "amendment has an invalid confidence"):
+                        parse_document_findings(json.dumps(findings))
 
     def test_normalizes_numeric_coordinate_strings(self):
         findings = valid_document_findings()

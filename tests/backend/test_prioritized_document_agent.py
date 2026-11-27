@@ -138,6 +138,12 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
             "include_maybe": False,
             "include_attachments": True,
             "default_polygon_area_square_metres": 50_000.0,
+            "pre_screening_batch_size": 3,
+            "max_concurrent_pre_screening_calls": 3,
+            "max_pre_screening_batch_characters": 150_000,
+            "clean_document_text": True,
+            "must_document_patterns": [],
+            "skip_document_type_patterns": [],
             "lpa_settings": {
                 "request_interval_seconds": 0,
                 "retry_increment_seconds": 0,
@@ -154,20 +160,26 @@ class PrioritizedDocumentAgentTests(unittest.TestCase):
             "id": "11", "priority": "skip", "uncertain": True,
             "reason": "The metadata is ambiguous.",
         }]
-        parsed = _parse_prioritization(json.dumps({"documents": uncertain}), ["11"])
+        parsed, warnings = _parse_prioritization(json.dumps({"documents": uncertain}), ["11"])
         self.assertEqual(parsed[0]["priority"], "skip")
         self.assertTrue(parsed[0]["uncertain"])
+        self.assertEqual(warnings, [])
         repaired = "Result: " + json.dumps({"documents": uncertain})[:-1] + ",}"
-        self.assertEqual(_parse_prioritization(repaired, ["11"]), parsed)
-        with self.assertRaisesRegex(ValueError, "unexpected IDs"):
-            _parse_prioritization(repaired, ["12"])
+        self.assertEqual(_parse_prioritization(repaired, ["11"]), (parsed, []))
+        _, warnings = _parse_prioritization(repaired, ["12"])
+        self.assertEqual(
+            [warning["type"] for warning in warnings],
+            ["missing_document_prioritizations", "unexpected_document_ids"],
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid priority"):
+            _parse_prioritization(json.dumps({"documents": [{**uncertain[0], "priority": "x"}]}), ["11"])
 
     def test_missing_prioritization_defaults_to_uncertain_maybe(self):
         response = {"documents": [
             {"id": "11", "priority": "must", "uncertain": False, "reason": "Core document."},
         ]}
 
-        parsed = _parse_prioritization(json.dumps(response), ["11", "12"])
+        parsed, _ = _parse_prioritization(json.dumps(response), ["11", "12"])
 
         self.assertEqual(parsed[1], {
             "id": "12",

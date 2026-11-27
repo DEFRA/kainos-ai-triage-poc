@@ -139,9 +139,44 @@ class S3OrchestratorTests(unittest.TestCase):
         self.assertEqual(self.mocks["intake"].call_args.kwargs["model_config_path"], intake_model)
         self.assertEqual(
             self.mocks["document"].call_args.args[2],
-            Path(__file__).resolve().parents[1] / "environment/model_configs/document.yaml",
+            Path(__file__).resolve().parents[2] / "environment/model_configs/document.yaml",
         )
         self.assertEqual(self.mocks["spatial"].call_args.args[2], "model.yaml")
+
+    def test_document_screening_model_configs_can_be_set_per_call(self):
+        self.config_path.write_text(
+            CONFIG + "model_configs:\n"
+            "  document_screening:\n"
+            "    prioritization: environment/model_configs/ranking.yaml\n"
+            "    pre_screening: /absolute/batches.yaml\n"
+            "    screening: environment/model_configs/consolidation.yaml\n",
+            encoding="utf-8",
+        )
+
+        run = self.run_consultation()
+
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual(run["errors"], [])
+        self.assertEqual(self.mocks["document"].call_args.args[2], {
+            "prioritization": root / "environment/model_configs/ranking.yaml",
+            "pre_screening": Path("/absolute/batches.yaml"),
+            "screening": root / "environment/model_configs/consolidation.yaml",
+        })
+
+    def test_incomplete_document_screening_model_mapping_stops_before_intake(self):
+        self.config_path.write_text(
+            CONFIG + "model_configs:\n"
+            "  document_screening:\n"
+            "    prioritization: ranking.yaml\n"
+            "    screening: consolidation.yaml\n",
+            encoding="utf-8",
+        )
+
+        run = self.run_consultation()
+
+        self.assertEqual(run["errors"][0]["stage"], "configuration")
+        self.assertIn("pre_screening", run["errors"][0]["message"])
+        self.mocks["intake"].assert_not_called()
 
     def test_invalid_stage_model_config_stops_before_intake(self):
         self.config_path.write_text(CONFIG + "model_configs:\n  case_intake: 123\n", encoding="utf-8")

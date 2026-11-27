@@ -234,7 +234,10 @@ class OrchestratorTests(unittest.TestCase):
             "  spatial_screening: []\n"
             "  decision: []\n"
             "model_configs:\n"
-            "  document_screening: environment/model_configs/document.yaml\n"
+            "  document_screening:\n"
+            "    prioritization: environment/model_configs/ranking.yaml\n"
+            "    pre_screening: environment/model_configs/document.yaml\n"
+            "    screening: environment/model_configs/consolidation.yaml\n"
             "  spatial_screening: environment/model_configs/spatial.yaml\n",
             encoding="utf-8",
         )
@@ -246,7 +249,8 @@ class OrchestratorTests(unittest.TestCase):
             result = run_consultation(make_case_intake(), "model.yaml", self.output_directory)
 
         self.assertEqual(result["errors"], [])
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
+        # The single-call standard agent uses the pre-screening model from a per-call mapping.
         self.assertEqual(document.call_args.kwargs["model_config_path"], root / "environment/model_configs/document.yaml")
         self.assertEqual(spatial.call_args.kwargs["model_config_path"], root / "environment/model_configs/spatial.yaml")
 
